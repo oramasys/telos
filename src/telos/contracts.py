@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import Protocol
 
 
 class EndpointPurpose(StrEnum):
@@ -69,3 +70,9 @@ class DecisionRecord:
     decision: EndpointUseDecision
     recorded_at: datetime
 
+
+class TelosPort(Protocol):
+    """Composition boundary used by the Oramasys gateway lifecycle."""
+
+    def authorize(self, request: EndpointUseRequest) -> EndpointUseDecision:
+        """Return a purpose-scoped decision for a normalized endpoint."""

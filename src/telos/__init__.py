@@ -7,6 +7,7 @@ from .contracts import (
     EndpointRef,
     EndpointUseDecision,
     EndpointUseRequest,
+    TelosPort,
 )
 from .policy import EndpointPolicy, PurposeRule
 
@@ -19,5 +20,5 @@ __all__ = [
     "EndpointUseDecision",
     "EndpointUseRequest",
     "PurposeRule",
+    "TelosPort",
 ]
-

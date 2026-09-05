@@ -22,6 +22,7 @@ The package provides:
 - redacted in-memory decision records for tests and local composition;
 - a protocol-shaped authorizer that can later be backed by a durable policy
   service without changing callers.
+- a `TelosPort` protocol for dependency-injected Oramasys lifecycle adapters.
 
 This is a contract/reference implementation, not a production network service.
 The caller must obtain endpoint identity from the canonical endpoint-policy
@@ -54,4 +55,3 @@ Perpetua-Tools and Orama. It does not claim that either legacy authority has
 already been migrated. See the companion reconstruction plan in the OpenClaw
 references directory and Orama's v2 kernel/security plans before adding new
 consumers.
-
