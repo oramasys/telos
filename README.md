@@ -42,7 +42,7 @@ decision = authorizer.authorize(EndpointUseRequest(
     actor_id="gateway",
     workflow_id="readiness",
     purpose=EndpointPurpose.HEALTH_PROBE,
-    endpoint=EndpointRef(scheme="https", host="model.internal", port=443),
+    endpoint=EndpointRef(scheme="https", host="model.internal", port=443, is_public=False),
     run_id="run-1",
 ))
 assert decision.allowed

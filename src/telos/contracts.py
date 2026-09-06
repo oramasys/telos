@@ -16,12 +16,24 @@ class EndpointPurpose(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class EndpointRef:
-    """A normalized endpoint identity, never a raw credential-bearing URL."""
+    """A normalized endpoint identity, never a raw credential-bearing URL.
+
+    `is_public` is trusted evidence, not something Telos can verify on its
+    own -- Telos explicitly does not resolve DNS or classify IP addresses
+    (see module docstring / boundary record). It MUST be supplied by the
+    canonical endpoint-normalization primitive that constructs this object,
+    never by an untrusted actor whose request Telos is about to authorize.
+    There is deliberately no default: a caller that omits it is forced to
+    make an explicit, auditable classification instead of silently getting
+    the permissive (non-public) value, which previously let a genuinely
+    public endpoint be asserted as private to bypass the `allow_public`
+    policy gate.
+    """
 
     scheme: str
     host: str
     port: int
-    is_public: bool = False
+    is_public: bool
 
     def __post_init__(self) -> None:
         scheme = self.scheme.strip().lower()
