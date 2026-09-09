@@ -1,57 +1,24 @@
 # Telos
 
-Telos is the semantic endpoint-use authorization boundary for Oramasys.
+Telos is the **canonical endpoint-security authority for Oramasys** and the v2 successor to the original Tripwire SSRF/dialer/socket-pinning design.
 
-It answers one narrow question:
+The accepted 2026-08-29 architecture is authoritative: Telos owns endpoint-specific security end to end. The September semantic-only scaffold was implementation drift and did not supersede that design.
 
-> May this actor use this already-normalized endpoint for this declared purpose?
+## Authority
 
-Telos does not parse arbitrary URLs, resolve DNS, pin connections, follow
-redirects, choose a provider, select hardware, or execute a request. Those
-responsibilities remain with the endpoint primitive, SSRF transport policy,
-provider adapter, and Agate respectively.
+Telos owns:
 
-## Initial vertical slice
+- URL parsing and canonical endpoint identity;
+- IP/CIDR and special-use destination classification;
+- SSRF and cloud-metadata protections;
+- DNS resolution and rebinding/TOCTOU resistance;
+- connection-time IP pinning;
+- redirect revalidation;
+- proxy isolation;
+- TLS destination identity, Host, and SNI preservation;
+- purpose-scoped endpoint-use authorization;
+- reusable safe transport primitives for provider adapters.
 
-The package provides:
+Provider packages own provider protocol and lifecycle semantics, not endpoint-security primitives. `oramasys/Claude-Desktop-LLM/src/policy/endpoint-policy.ts` and the v1 Perpetua-Tools endpoint-policy/SSRF stack are migration evidence, not permanent competing v2 authorities. v2 has no runtime dependency on v1 PT.
 
-- immutable `EndpointRef`, `EndpointUseRequest`, and `EndpointUseDecision`
-  contracts;
-- deny-by-default, exact-match policy rules;
-- explicit purpose names (`config_read`, `health_probe`, and `model_egress`);
-- redacted in-memory decision records for tests and local composition;
-- a protocol-shaped authorizer that can later be backed by a durable policy
-  service without changing callers.
-- a `TelosPort` protocol for dependency-injected Oramasys lifecycle adapters.
-
-This is a contract/reference implementation, not a production network service.
-The caller must obtain endpoint identity from the canonical endpoint-policy
-primitive and must still run the appropriate SSRF/transport checks before
-network access.
-
-## Example
-
-```python
-from telos import EndpointAuthorizer, EndpointRef, EndpointUseRequest, EndpointPurpose
-
-authorizer = EndpointAuthorizer.from_exact_rules({
-    EndpointPurpose.HEALTH_PROBE: {("https", "model.internal", 443)},
-})
-
-decision = authorizer.authorize(EndpointUseRequest(
-    actor_id="gateway",
-    workflow_id="readiness",
-    purpose=EndpointPurpose.HEALTH_PROBE,
-    endpoint=EndpointRef(scheme="https", host="model.internal", port=443, is_public=False),
-    run_id="run-1",
-))
-assert decision.allowed
-```
-
-## Boundary status
-
-This repository is intentionally being introduced during the transition from
-Perpetua-Tools and Orama. It does not claim that either legacy authority has
-already been migrated. See the companion reconstruction plan in the OpenClaw
-references directory and Orama's v2 kernel/security plans before adding new
-consumers.
+Telos uses the Apache License 2.0, matching the endpoint-policy package authority it replaces.

@@ -1,25 +1,24 @@
 # Telos Boundaries
 
-Telos is the semantic endpoint-use authority during the v2 migration.
+Telos owns **all endpoint-specific security**. This restores the accepted 2026-08-29 Tripwire/Telos architecture.
 
-| Concern | Owner |
+| Concern | Canonical owner |
 | --- | --- |
-| Normalized scheme/host/port identity | endpoint-policy primitive |
-| Arbitrary URL safety, DNS resolution, pinning, redirects | SSRF/transport layer |
-| Purpose-scoped permission to use a known endpoint | Telos |
-| Provider selection and readiness | provider adapter / Oramasys |
+| URL parse/canonicalization and scheme/host/port identity | Telos |
+| IP/CIDR, metadata and special-use classification | Telos |
+| SSRF, DNS resolution, DNS rebinding defense | Telos |
+| Connection-time IP/socket pinning | Telos |
+| Redirect/proxy/TLS destination safety | Telos |
+| Purpose-scoped endpoint-use authorization | Telos |
+| Provider protocol/readiness/lifecycle | provider owner / Oramasys composition |
 | Hardware capability and placement | Agate |
-| Artifact provenance and runtime admission | Phylax |
-| Workflow state, idempotency, and progress | Oramasys |
+| Generic runtime security/safety/admission/monitorability | Phylax |
+| Workflow state, idempotency, routing and progress | Oramasys |
 
-Telos must deny unknown purposes and unknown endpoints. It must not accept a
-credential-bearing raw URL as an authorization shortcut. An allow decision is
-not a transport safety decision and is not a cost reservation.
+A semantic `EndpointUseDecision` is not transport-safety evidence by itself. A transport-safe endpoint is not purpose-authorized by itself. Telos composes both decisions before network use.
 
-## Migration posture
+## Migration evidence
 
-Perpetua-Tools and orama-system remain the dual v1 authorities. This package
-is a compatibility-ready reference boundary, not proof that the v1 code has
-been migrated. New integrations must be injected behind contracts and must
-retain the legacy behavior until equivalent tests and review evidence exist.
-
+- v1 PT `packages/endpoint-policy`, `src/utils/endpoint_policy_core.py`, `src/utils/ssrf_fetch_policy.py`, and `src/utils/ssrf_pinned_adapter.py` are read-only golden evidence.
+- `oramasys/Claude-Desktop-LLM/src/policy/endpoint-policy.ts` is v2 implementation evidence to be transferred to Telos, not a permanent duplicate authority.
+- no v2 runtime may import or execute PT endpoint-security code.

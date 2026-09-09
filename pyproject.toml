@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "oramasys-telos"
-version = "0.1.0a1"
-description = "Purpose-scoped endpoint-use authorization for Oramasys"
-license = { text = "MIT" }
+version = "0.2.0a1"
+description = "Canonical endpoint-security authority for Oramasys"
+license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 dependencies = []
 
@@ -19,4 +19,3 @@ packages = ["src/telos"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["src/tests"]
-

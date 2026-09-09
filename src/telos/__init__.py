@@ -1,24 +1,18 @@
-"""Telos endpoint-use authorization contracts."""
-
+"""Telos: canonical endpoint-security authority for Oramasys."""
+from .address import assert_address_allowed, is_metadata_address, is_public_address, parse_ip
 from .authorizer import EndpointAuthorizer
-from .contracts import (
-    DecisionRecord,
-    EndpointPurpose,
-    EndpointRef,
-    EndpointUseDecision,
-    EndpointUseRequest,
-    TelosPort,
-)
+from .contracts import AuthorizedEndpoint, DecisionRecord, EndpointIdentity, EndpointPurpose, EndpointRef, EndpointUseDecision, EndpointUseRequest, TelosPort
+from .errors import EndpointPolicyError, TelosError
+from .identity import endpoint_from_url
 from .policy import EndpointPolicy, PurposeRule
+from .resolver import resolve_endpoint
+from .transport import TelosResponse, TransportPolicy, authorize_url, request
 
 __all__ = [
-    "DecisionRecord",
-    "EndpointAuthorizer",
-    "EndpointPolicy",
-    "EndpointPurpose",
-    "EndpointRef",
-    "EndpointUseDecision",
-    "EndpointUseRequest",
-    "PurposeRule",
-    "TelosPort",
+    "AuthorizedEndpoint", "DecisionRecord", "EndpointAuthorizer", "EndpointIdentity",
+    "EndpointPolicy", "EndpointPolicyError", "EndpointPurpose", "EndpointRef",
+    "EndpointUseDecision", "EndpointUseRequest", "PurposeRule", "TelosError",
+    "TelosPort", "TelosResponse", "TransportPolicy", "assert_address_allowed",
+    "authorize_url", "endpoint_from_url", "is_metadata_address", "is_public_address",
+    "parse_ip", "request", "resolve_endpoint",
 ]
