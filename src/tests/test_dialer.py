@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
-
-import pytest
 
 from telos import EndpointAuthorizer, EndpointPurpose, EndpointRef
 from telos.dialer import ConnectedPeer, SecureDialRequest, SecureDialer
@@ -55,8 +54,7 @@ def request(endpoint: EndpointRef, *, allow_public: bool = False) -> SecureDialR
     )
 
 
-@pytest.mark.asyncio
-async def test_mixed_dns_answer_rejects_before_connector_invocation() -> None:
+def test_mixed_dns_answer_rejects_before_connector_invocation() -> None:
     endpoint = EndpointRef("http", "ollama.local", 11434)
     resolver = FakeResolver({endpoint.host: ["127.0.0.1", "169.254.169.254"]})
     connector = FakeConnector("127.0.0.1")
@@ -64,15 +62,14 @@ async def test_mixed_dns_answer_rejects_before_connector_invocation() -> None:
         authorizer=authorizer(endpoint), resolver=resolver.resolve, connector=connector
     )
 
-    result = await dialer.dial(request(endpoint))
+    result = asyncio.run(dialer.dial(request(endpoint)))
 
     assert not result.allowed
     assert result.reason_code == "metadata_denied"
     assert connector.calls == []
 
 
-@pytest.mark.asyncio
-async def test_ipv4_mapped_ipv6_metadata_is_rejected_before_connector_invocation() -> None:
+def test_ipv4_mapped_ipv6_metadata_is_rejected_before_connector_invocation() -> None:
     endpoint = EndpointRef("http", "ollama.local", 11434)
     resolver = FakeResolver({endpoint.host: ["::ffff:169.254.169.254"]})
     connector = FakeConnector("169.254.169.254")
@@ -80,15 +77,14 @@ async def test_ipv4_mapped_ipv6_metadata_is_rejected_before_connector_invocation
         authorizer=authorizer(endpoint), resolver=resolver.resolve, connector=connector
     )
 
-    result = await dialer.dial(request(endpoint))
+    result = asyncio.run(dialer.dial(request(endpoint)))
 
     assert not result.allowed
     assert result.reason_code == "metadata_denied"
     assert connector.calls == []
 
 
-@pytest.mark.asyncio
-async def test_connected_peer_must_equal_vetted_pin() -> None:
+def test_connected_peer_must_equal_vetted_pin() -> None:
     endpoint = EndpointRef("http", "ollama.local", 11434)
     resolver = FakeResolver({endpoint.host: ["127.0.0.1"]})
     connector = FakeConnector("127.0.0.2")
@@ -96,15 +92,14 @@ async def test_connected_peer_must_equal_vetted_pin() -> None:
         authorizer=authorizer(endpoint), resolver=resolver.resolve, connector=connector
     )
 
-    result = await dialer.dial(request(endpoint))
+    result = asyncio.run(dialer.dial(request(endpoint)))
 
     assert not result.allowed
     assert result.reason_code == "peer_pin_mismatch"
     assert connector.calls[0][1] == "127.0.0.1"
 
 
-@pytest.mark.asyncio
-async def test_success_returns_identity_decision_and_provider_ref() -> None:
+def test_success_returns_identity_decision_and_provider_ref() -> None:
     endpoint = EndpointRef("http", "ollama.local", 11434)
     resolver = FakeResolver({endpoint.host: ["127.0.0.1"]})
     connector = FakeConnector("127.0.0.1")
@@ -112,7 +107,7 @@ async def test_success_returns_identity_decision_and_provider_ref() -> None:
         authorizer=authorizer(endpoint), resolver=resolver.resolve, connector=connector
     )
 
-    result = await dialer.dial(request(endpoint))
+    result = asyncio.run(dialer.dial(request(endpoint)))
 
     assert result.allowed
     assert result.reason_code == "dialed"
