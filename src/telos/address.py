@@ -9,6 +9,17 @@ _METADATA_IPS = {
     ipaddress.ip_address("100.100.100.200"),
 }
 
+# Transition/relay mechanisms are neither ordinary private model-server
+# destinations nor ordinary public endpoints. Python's ipaddress predicates
+# are not sufficient here: 192.88.99.0/24 may look global, while Teredo/6to4
+# may look private. Deny them explicitly so permissive profiles cannot admit
+# tunnel/relay semantics as a direct endpoint.
+_TRANSITION_NETWORKS = (
+    ipaddress.ip_network("192.88.99.0/24"),  # 6to4 relay anycast
+    ipaddress.ip_network("2001::/32"),       # Teredo
+    ipaddress.ip_network("2002::/16"),       # 6to4
+)
+
 
 def parse_ip(address: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     try:
@@ -33,6 +44,8 @@ def assert_address_allowed(address: str, *, allow_public: bool, allow_private: b
     ip = parse_ip(address)
     if is_metadata_address(address):
         raise EndpointPolicyError("metadata_denied", f"metadata endpoint denied: {address}")
+    if any(ip in network for network in _TRANSITION_NETWORKS):
+        raise EndpointPolicyError("transition_network_denied", f"transition/relay network denied: {address}")
     if ip.is_unspecified:
         raise EndpointPolicyError("unspecified_denied", f"unspecified address denied: {address}")
     if ip.is_multicast:
