@@ -9,18 +9,24 @@ only a vetted pin, and the connected peer is rechecked against that pin.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from secrets import token_urlsafe
 from typing import Protocol
 
 from .address import assert_address_allowed, is_public_address, parse_ip
-from .authorizer import EndpointAuthorizer
 from .contracts import EndpointIdentity, EndpointPurpose, EndpointRef, EndpointUseDecision, EndpointUseRequest
 from .errors import EndpointPolicyError
 
 
 AsyncResolver = Callable[[str], Awaitable[Sequence[str]]]
+
+
+class SecureDialAuthorizer(Protocol):
+    def authorize(
+        self, request: EndpointUseRequest
+    ) -> EndpointUseDecision | Awaitable[EndpointUseDecision]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +88,7 @@ class SecureDialer:
     def __init__(
         self,
         *,
-        authorizer: EndpointAuthorizer,
+        authorizer: SecureDialAuthorizer,
         resolver: AsyncResolver,
         connector: SecureDialConnector,
     ) -> None:
@@ -101,7 +107,7 @@ class SecureDialer:
                 ):
                     return SecureDialResult(False, "https_required", identity)
 
-                decision = self._authorizer.authorize(
+                maybe_decision = self._authorizer.authorize(
                     EndpointUseRequest(
                         actor_id=request.actor_id,
                         workflow_id=request.workflow_id,
@@ -109,6 +115,11 @@ class SecureDialer:
                         endpoint=identity,
                         run_id=request.run_id,
                     )
+                )
+                decision = (
+                    await maybe_decision
+                    if inspect.isawaitable(maybe_decision)
+                    else maybe_decision
                 )
                 if not decision.allowed:
                     return SecureDialResult(
