@@ -12,6 +12,7 @@ import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from secrets import token_urlsafe
 from typing import Protocol
 
@@ -121,6 +122,14 @@ class SecureDialer:
                     if inspect.isawaitable(maybe_decision)
                     else maybe_decision
                 )
+                if decision.endpoint != identity:
+                    return SecureDialResult(
+                        False, "authorization_endpoint_mismatch", identity, decision
+                    )
+                if _decision_is_expired(decision):
+                    return SecureDialResult(
+                        False, "authorization_expired", identity, decision
+                    )
                 if not decision.allowed:
                     return SecureDialResult(
                         False, f"purpose_denied:{decision.reason_code}", identity, decision
@@ -193,3 +202,12 @@ class SecureDialer:
             is_public=public_flags[0],
             resolution_ref=token_urlsafe(18),
         )
+
+
+def _decision_is_expired(decision: EndpointUseDecision) -> bool:
+    expires_at = decision.expires_at
+    return expires_at is not None and (
+        expires_at.tzinfo is None
+        or expires_at.utcoffset() is None
+        or expires_at <= datetime.now(UTC)
+    )
