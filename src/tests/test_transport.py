@@ -1,4 +1,4 @@
-import socket,pytest
+import socket,ssl,pytest
 import telos.transport as transport
 from telos import EndpointAuthorizer,EndpointPolicyError,EndpointPurpose,TransportPolicy
 def resolver_to(address):
@@ -23,6 +23,8 @@ def test_pinned_https_preserves_original_hostname_for_sni(monkeypatch):
     fake_tls = object()
     monkeypatch.setattr(socket, "create_connection", lambda addr, timeout: fake_raw)
     class Context:
+        verify_mode = ssl.CERT_REQUIRED
+        check_hostname = True
         def wrap_socket(self, raw, server_hostname):
             calls.append((raw, server_hostname))
             return fake_tls
