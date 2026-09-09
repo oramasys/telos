@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "pytest-cov>=6.0"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/telos"]
@@ -19,3 +19,4 @@ packages = ["src/telos"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["src/tests"]
+addopts = "--cov=telos --cov-report=term-missing --cov-fail-under=80"
