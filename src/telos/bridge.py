@@ -12,7 +12,8 @@ from .authorizer import EndpointAuthorizer
 from .contracts import EndpointPurpose
 from .identity import endpoint_from_url
 from .transport import TransportPolicy, request
-from .errors import TelosError
+from .errors import EndpointPolicyError, TelosError
+from .address import parse_ip
 
 
 def _purpose(value: str) -> EndpointPurpose:
@@ -22,20 +23,49 @@ def _purpose(value: str) -> EndpointPurpose:
         raise ValueError(f"unknown endpoint purpose: {value!r}") from exc
 
 
+def _direct_loopback_host(host: str) -> bool:
+    normalized = host.lower().rstrip(".")
+    if normalized == "localhost" or normalized.endswith(".localhost"):
+        return True
+    try:
+        return bool(parse_ip(normalized).is_loopback)
+    except EndpointPolicyError:
+        return False
+
+
 def handle(payload: dict) -> dict:
     method = str(payload.get("method", "GET"))
     url = str(payload["url"])
     purpose = _purpose(str(payload.get("purpose", EndpointPurpose.MODEL_EGRESS.value)))
     endpoint = endpoint_from_url(url)
     allowed = payload.get("allowed_endpoints") or []
-    allowed_keys = {endpoint_from_url(str(item)).key for item in allowed}
+    allowed_keys = {
+        endpoint_from_url(str(item)).key
+        for item in allowed
+    }
+    allow_remote = bool(payload.get("allow_remote", False))
+    allowed_hosts = {
+        str(host).lower().rstrip(".")
+        for host in (payload.get("allowed_hosts") or [])
+    }
+    if not _direct_loopback_host(endpoint.host):
+        if not allow_remote:
+            raise EndpointPolicyError(
+                "remote_denied",
+                "remote endpoint requires explicit opt-in",
+            )
+        if endpoint.host not in allowed_hosts:
+            raise EndpointPolicyError(
+                "host_not_allowlisted",
+                f"remote host not allowlisted: {endpoint.host}",
+            )
     authorizer = EndpointAuthorizer.from_exact_rules({purpose: allowed_keys})
     body_raw = payload.get("body_base64")
     body = base64.b64decode(body_raw) if body_raw is not None else None
     profile = payload.get("transport") or {}
     policy = TransportPolicy(
-        allow_public=bool(profile.get("allow_public", False)),
-        allow_private=bool(profile.get("allow_private", False)),
+        allow_public=bool(profile.get("allow_public", allow_remote)),
+        allow_private=bool(profile.get("allow_private", allow_remote)),
         allow_loopback=bool(profile.get("allow_loopback", True)),
         require_https_for_public=bool(profile.get("require_https_for_public", True)),
         max_redirects=int(profile.get("max_redirects", 3)),
@@ -72,7 +102,13 @@ def main() -> int:
             result = handle(json.loads(line))
             out = {"ok_bridge": True, "result": result}
         except (TelosError, ValueError, KeyError, TypeError) as exc:
-            out = {"ok_bridge": False, "error": {"code": getattr(exc, "code", "invalid_request"), "message": str(exc)}}
+            out = {
+                "ok_bridge": False,
+                "error": {
+                    "code": getattr(exc, "code", "invalid_request"),
+                    "message": str(exc),
+                },
+            }
         sys.stdout.write(json.dumps(out, separators=(",", ":")) + "\n")
         sys.stdout.flush()
     return 0
