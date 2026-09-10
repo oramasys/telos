@@ -116,7 +116,7 @@ def handle(payload: dict) -> dict:
                 f"remote host not allowlisted: {endpoint.host}",
             )
     raw_headers = {str(k): str(v) for k, v in (payload.get("headers") or {}).items()}
-    if endpoint.scheme != "https":
+    if endpoint.scheme != "https" and not _direct_loopback_host(endpoint.host):
         credential_headers = [k for k in raw_headers if _CREDENTIAL_HEADER_RE.match(k)]
         if credential_headers:
             raise EndpointPolicyError(

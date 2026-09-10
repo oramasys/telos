@@ -172,3 +172,22 @@ def test_main_catches_transport_errors_and_continues(monkeypatch):
     out = json_module.loads(stdout.getvalue().strip())
     assert out['ok_bridge'] is False
     assert out['error']['code'] == 'transport_error'
+
+
+def test_bridge_allows_credential_header_over_loopback_http(monkeypatch):
+    """Explicit decision: loopback traffic never leaves the machine, so the
+    network-eavesdropping risk credentials_require_https guards against
+    doesn't apply there -- exempted, unlike a remote host over plain HTTP."""
+    class Response:
+        status = 200
+        headers = ()
+        body = b''
+        final_url = 'http://localhost:11434/v1/models'
+    monkeypatch.setattr(bridge, 'request', lambda *a, **k: Response())
+    payload = {
+        'url': 'http://localhost:11434/v1/models',
+        'allowed_endpoints': ['http://localhost:11434'],
+        'headers': {'X-API-Key': 'secret-value'},
+    }
+    result = bridge.handle(payload)
+    assert result['status'] == 200
