@@ -41,7 +41,7 @@ def test_redirect_target_is_reauthorized_and_reclassified(monkeypatch):
     class R:
         def __init__(self,status,headers,body):self.status,self._headers,self._body=status,headers,body
         def getheaders(self):return self._headers
-        def read(self):return self._body
+        def read(self, amt=None):return self._body
     class C:
         def __init__(self,host,port,pinned_ip,timeout):pass
         def request(self,*a,**k):pass
@@ -70,7 +70,7 @@ def test_302_switches_post_to_get_and_drops_body(monkeypatch):
     class Resp:
         def __init__(self,status,headers,body): self.status,self._headers,self._body=status,headers,body
         def getheaders(self): return self._headers
-        def read(self): return self._body
+        def read(self, amt=None): return self._body
     class Conn:
         def __init__(self,host,port,pinned_ip,timeout): self.host=host
         def request(self,method,path,body=None,headers=None): seen.append((self.host,method,path,body,dict(headers or {})))
@@ -96,7 +96,7 @@ def test_307_preserves_method_and_body(monkeypatch):
     class Resp:
         def __init__(self,status,headers,body): self.status,self._headers,self._body=status,headers,body
         def getheaders(self): return self._headers
-        def read(self): return self._body
+        def read(self, amt=None): return self._body
     class Conn:
         def __init__(self,host,port,pinned_ip,timeout): pass
         def request(self,method,path,body=None,headers=None): seen.append((method,path,body))
@@ -131,3 +131,150 @@ def test_cancel_check_denies_before_resolution_or_network():
         )
     assert exc.value.code == "cancelled"
     assert called == []
+
+
+def test_304_not_modified_does_not_follow_location(monkeypatch):
+    """A 304 with a stray Location header must not be followed -- Not
+    Modified is not a redirect."""
+    class Resp:
+        def __init__(self): self.status = 304
+        def getheaders(self): return [("Location", "http://metadata.example/latest")]
+        def read(self, amt=None): return b""
+    class Conn:
+        def __init__(self, host, port, pinned_ip, timeout): pass
+        def request(self, *a, **k): pass
+        def getresponse(self): return Resp()
+        def close(self): pass
+    monkeypatch.setattr(transport, "_PinnedHTTPConnection", Conn)
+    auth = EndpointAuthorizer.from_exact_rules({EndpointPurpose.HEALTH_PROBE: {("http", "start.internal", 80)}})
+    result = transport.request(
+        "GET", "http://start.internal", authorizer=auth,
+        transport_policy=TransportPolicy(allow_private=True, allow_loopback=False),
+        actor_id="gateway", workflow_id="readiness", purpose=EndpointPurpose.HEALTH_PROBE,
+        run_id="r", resolver=resolver_to("10.0.0.5"),
+    )
+    assert result.status == 304
+    assert result.final_url == "http://start.internal"
+
+
+def test_deadline_does_not_reset_per_redirect_hop(monkeypatch):
+    """The regression this fix closes: a 3-hop redirect chain must share one
+    overall deadline, not get a fresh full timeout at each hop."""
+    import time as time_module
+    responses = [
+        (302, [("Location", "http://hop2.internal/")], b""),
+        (302, [("Location", "http://hop3.internal/")], b""),
+        (200, [], b"done"),
+    ]
+    seen_timeouts = []
+    class Resp:
+        def __init__(self, status, headers, body): self.status, self._headers, self._body = status, headers, body
+        def getheaders(self): return self._headers
+        def read(self, amt=None): return self._body
+    class Conn:
+        def __init__(self, host, port, pinned_ip, timeout):
+            seen_timeouts.append(timeout)
+        def request(self, *a, **k): pass
+        def getresponse(self): return Resp(*responses.pop(0))
+        def close(self): pass
+    monkeypatch.setattr(transport, "_PinnedHTTPConnection", Conn)
+    real_monotonic = time_module.monotonic
+    fake_now = [real_monotonic()]
+    monkeypatch.setattr(transport.time, "monotonic", lambda: fake_now[0])
+
+    def advancing_conn(*args, **kwargs):
+        fake_now[0] += 0.3
+        return Conn(*args, **kwargs)
+    monkeypatch.setattr(transport, "_PinnedHTTPConnection", advancing_conn)
+
+    auth = EndpointAuthorizer.from_exact_rules({
+        EndpointPurpose.HEALTH_PROBE: {
+            ("http", "start.internal", 80), ("http", "hop2.internal", 80), ("http", "hop3.internal", 80),
+        }
+    })
+    transport.request(
+        "GET", "http://start.internal", authorizer=auth,
+        transport_policy=TransportPolicy(allow_private=True, allow_loopback=False),
+        actor_id="gateway", workflow_id="readiness", purpose=EndpointPurpose.HEALTH_PROBE,
+        run_id="r", timeout=1.0, resolver=resolver_to("10.0.0.5"),
+    )
+    # Each hop's remaining-time budget must shrink, not reset to 1.0 each time.
+    assert seen_timeouts[0] > seen_timeouts[1] > seen_timeouts[2]
+    assert seen_timeouts[0] <= 1.0
+
+
+def test_response_body_exceeding_limit_is_rejected(monkeypatch):
+    class Resp:
+        def __init__(self): self.status = 200
+        def getheaders(self): return []
+        def read(self, amt=None):
+            # A real bounded socket read only ever returns up to `amt` bytes.
+            return b"x" * amt if amt is not None else b"x" * 999999
+    class Conn:
+        def __init__(self, host, port, pinned_ip, timeout): pass
+        def request(self, *a, **k): pass
+        def getresponse(self): return Resp()
+        def close(self): pass
+    monkeypatch.setattr(transport, "_PinnedHTTPConnection", Conn)
+    auth = EndpointAuthorizer.from_exact_rules({EndpointPurpose.HEALTH_PROBE: {("http", "start.internal", 80)}})
+    with pytest.raises(EndpointPolicyError) as exc:
+        transport.request(
+            "GET", "http://start.internal", authorizer=auth,
+            transport_policy=TransportPolicy(allow_private=True, allow_loopback=False, max_body_bytes=10),
+            actor_id="gateway", workflow_id="readiness", purpose=EndpointPurpose.HEALTH_PROBE,
+            run_id="r", resolver=resolver_to("10.0.0.5"),
+        )
+    assert exc.value.code == "response_body_too_large"
+
+
+def test_response_body_within_limit_is_accepted(monkeypatch):
+    class Resp:
+        def __init__(self): self.status = 200
+        def getheaders(self): return []
+        def read(self, amt=None): return b"ok"
+    class Conn:
+        def __init__(self, host, port, pinned_ip, timeout): pass
+        def request(self, *a, **k): pass
+        def getresponse(self): return Resp()
+        def close(self): pass
+    monkeypatch.setattr(transport, "_PinnedHTTPConnection", Conn)
+    auth = EndpointAuthorizer.from_exact_rules({EndpointPurpose.HEALTH_PROBE: {("http", "start.internal", 80)}})
+    result = transport.request(
+        "GET", "http://start.internal", authorizer=auth,
+        transport_policy=TransportPolicy(allow_private=True, allow_loopback=False, max_body_bytes=10),
+        actor_id="gateway", workflow_id="readiness", purpose=EndpointPurpose.HEALTH_PROBE,
+        run_id="r", resolver=resolver_to("10.0.0.5"),
+    )
+    assert result.body == b"ok"
+
+
+def test_custom_credential_header_is_stripped_across_redirect_origin(monkeypatch):
+    """The review's own example: X-API-Key must not survive a cross-origin
+    redirect, even though it isn't one of the 3 hardcoded standard names."""
+    responses = [
+        (302, [("Location", "https://two.example/next")], b""),
+        (200, [], b""),
+    ]
+    seen_headers = []
+    class Resp:
+        def __init__(self, status, headers, body): self.status, self._headers, self._body = status, headers, body
+        def getheaders(self): return self._headers
+        def read(self, amt=None): return self._body
+    class Conn:
+        def __init__(self, host, port, pinned_ip, timeout): pass
+        def request(self, method, path, body=None, headers=None): seen_headers.append(dict(headers or {}))
+        def getresponse(self): return Resp(*responses.pop(0))
+        def close(self): pass
+    monkeypatch.setattr(transport, "_PinnedHTTPSConnection", Conn)
+    auth = EndpointAuthorizer.from_exact_rules({
+        EndpointPurpose.MODEL_EGRESS: {("https", "one.example", 443), ("https", "two.example", 443)}
+    })
+    transport.request(
+        "GET", "https://one.example/start", authorizer=auth,
+        transport_policy=TransportPolicy(allow_public=True, allow_loopback=False),
+        actor_id="gateway", workflow_id="egress", purpose=EndpointPurpose.MODEL_EGRESS,
+        run_id="r", headers={"X-API-Key": "secret-value", "Accept": "application/json"},
+        resolver=resolver_to("93.184.216.34"),
+    )
+    assert "X-API-Key" not in seen_headers[1]
+    assert "Accept" in seen_headers[1]

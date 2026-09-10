@@ -11,6 +11,7 @@ def test_exact_endpoint_is_allowed_and_recorded():
     auth = EndpointAuthorizer.from_exact_rules({EndpointPurpose.HEALTH_PROBE: {("https", "model.internal", 443)}})
     decision = auth.authorize(EndpointUseRequest("gateway", "readiness", EndpointPurpose.HEALTH_PROBE, identity(), "run-1"))
     assert decision.allowed
+    assert decision.reason_code == "allowed"
     assert len(auth.records) == 1
 
 def test_unknown_purpose_is_denied():

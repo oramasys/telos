@@ -73,3 +73,102 @@ def test_bridge_requires_remote_opt_in_and_host_allowlist(monkeypatch):
         assert exc.code == 'host_not_allowlisted'
     else:
         raise AssertionError('unlisted host unexpectedly allowed')
+
+
+def test_bridge_rejects_credential_header_over_http():
+    payload = {
+        'url': 'http://provider.example/v1/models',
+        'allowed_endpoints': ['http://provider.example'],
+        'allow_remote': True,
+        'allowed_hosts': ['provider.example'],
+        'headers': {'X-API-Key': 'secret-value'},
+    }
+    try:
+        bridge.handle(payload)
+    except bridge.EndpointPolicyError as exc:
+        assert exc.code == 'credentials_require_https'
+    else:
+        raise AssertionError('credential header over HTTP unexpectedly allowed')
+
+
+def test_bridge_allows_credential_header_over_https(monkeypatch):
+    class Response:
+        status = 200
+        headers = ()
+        body = b''
+        final_url = 'https://provider.example/v1/models'
+    monkeypatch.setattr(bridge, 'request', lambda *a, **k: Response())
+    payload = {
+        'url': 'https://provider.example/v1/models',
+        'allowed_endpoints': ['https://provider.example'],
+        'allow_remote': True,
+        'allowed_hosts': ['provider.example'],
+        'headers': {'X-API-Key': 'secret-value'},
+    }
+    result = bridge.handle(payload)
+    assert result['status'] == 200
+
+
+def test_bridge_host_allowlist_authorizer_denies_unlisted_redirect_target():
+    """The redirect-host-allowlist fix: transport.request() re-authorizes
+    each hop through the SAME authorizer object, so the wrapper must deny a
+    host outside allowed_hosts even when transport.request() -- not
+    handle()'s own one-time check -- is the one asking."""
+    base_auth = bridge.EndpointAuthorizer.from_exact_rules({
+        bridge.EndpointPurpose.MODEL_EGRESS: {('https', 'evil.example', 443)}
+    })
+    wrapped = bridge._HostAllowlistAuthorizer(base_auth, {'provider.example'})
+    identity = type('I', (), {
+        'endpoint': bridge.endpoint_from_url('https://evil.example'),
+    })()
+    req = bridge.EndpointUseRequest(
+        actor_id='gateway', workflow_id='egress',
+        purpose=bridge.EndpointPurpose.MODEL_EGRESS, endpoint=identity, run_id='r',
+    )
+    decision = wrapped.authorize(req)
+    assert decision.allowed is False
+    assert decision.reason_code == 'host_not_allowlisted'
+
+
+def test_bridge_rejects_non_dict_payload():
+    try:
+        bridge.handle("not a dict")
+    except ValueError as exc:
+        assert "must be a JSON object" in str(exc)
+    else:
+        raise AssertionError('non-dict payload unexpectedly accepted')
+
+
+def test_bridge_rejects_non_dict_transport_field():
+    payload = {
+        'url': 'http://localhost:11434/api/tags',
+        'allowed_endpoints': ['http://localhost:11434'],
+        'transport': "not an object",
+    }
+    try:
+        bridge.handle(payload)
+    except ValueError as exc:
+        assert "payload.transport must be an object" in str(exc)
+    else:
+        raise AssertionError('non-dict transport field unexpectedly accepted')
+
+
+def test_main_catches_transport_errors_and_continues(monkeypatch):
+    import io
+    def raising_request(*a, **k):
+        raise ConnectionResetError("connection reset by peer")
+    monkeypatch.setattr(bridge, 'request', raising_request)
+    payload = {
+        'url': 'http://localhost:11434/api/tags',
+        'allowed_endpoints': ['http://localhost:11434'],
+    }
+    import json as json_module
+    stdin = io.StringIO(json_module.dumps(payload) + "\n")
+    stdout = io.StringIO()
+    monkeypatch.setattr(bridge.sys, 'stdin', stdin)
+    monkeypatch.setattr(bridge.sys, 'stdout', stdout)
+    result = bridge.main()
+    assert result == 0
+    out = json_module.loads(stdout.getvalue().strip())
+    assert out['ok_bridge'] is False
+    assert out['error']['code'] == 'transport_error'

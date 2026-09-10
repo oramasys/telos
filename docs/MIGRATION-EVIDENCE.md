@@ -29,7 +29,7 @@ inside Telos.
 | `oramasys/telos` scaffold | `88fba4beb95b3809e0a6094fedc766b03cb95b0e` | semantic endpoint-use contracts and deny-by-default purpose policy |
 
 Governance/correction inputs also include the 2026-09-10 restoration package
-(`CORRECTION-2026-09-10.md`, Telos/Phylax boundary/license corrections, and
+(`ERRATA-2026-09-10.md`, Telos/Phylax boundary/license corrections, and
 apply instructions). Those files are planning/provenance inputs; the live
 verified Telos branch is the implementation source of truth.
 

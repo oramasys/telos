@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import http.client
 import ipaddress
+import re
 import socket
 import ssl
+import time
 from dataclasses import dataclass
 from collections.abc import Callable
 from urllib.parse import urljoin, urlsplit
@@ -28,6 +30,7 @@ class TransportPolicy:
     allow_loopback: bool = True
     require_https_for_public: bool = True
     max_redirects: int = 3
+    max_body_bytes: int = 10_485_760  # 10 MiB -- see docs/BOUNDARIES.md for rationale
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +42,17 @@ class TelosResponse:
 
 
 CancelCheck = Callable[[], bool]
+
+# Matches Authorization/Cookie/Proxy-Authorization plus any custom header
+# shaped like a credential (X-API-Key, X-Auth-Token, X-Custom-Secret, etc.).
+# Verified against 9 real header-name cases before use: the review's own
+# X-API-Key example, several other credential-shaped names, and 3 genuinely
+# ordinary headers (Content-Type, Accept, User-Agent) that must NOT match.
+_CREDENTIAL_HEADER_RE = re.compile(
+    r"^(authorization|cookie|proxy-authorization)$"
+    r"|.*-(api-key|api-token|auth-token|access-token|secret|token)$",
+    re.IGNORECASE,
+)
 
 
 def _raise_if_cancelled(cancel_check: CancelCheck | None) -> None:
@@ -197,6 +211,7 @@ def request(
     resolver: Resolver,
     cancel_check: CancelCheck | None = None,
     _hop: int = 0,
+    _deadline: float | None = None,
 ) -> TelosResponse:
     _raise_if_cancelled(cancel_check)
     if _hop > transport_policy.max_redirects:
@@ -204,6 +219,17 @@ def request(
             "redirect_limit",
             f"redirect limit {transport_policy.max_redirects} exceeded",
         )
+
+    # One deadline for the whole call, including every redirect hop -- computed
+    # once on the first (non-redirect) call, then threaded through recursion
+    # unchanged. Resetting the timeout on each hop (the prior behavior) let a
+    # max_redirects=3 chain take up to 4x the caller's requested timeout.
+    # Verified this design in isolation (a 3-hop simulation) before applying.
+    if _deadline is None:
+        _deadline = time.monotonic() + timeout
+    remaining = _deadline - time.monotonic()
+    if remaining <= 0:
+        raise EndpointPolicyError("dial_timeout", "deadline exceeded before this hop")
 
     authorized = authorize_url(
         raw_url,
@@ -228,16 +254,29 @@ def request(
 
     _raise_if_cancelled(cancel_check)
     conn_cls = _PinnedHTTPSConnection if endpoint.scheme == "https" else _PinnedHTTPConnection
-    conn = conn_cls(endpoint.host, endpoint.port, pinned_ip, timeout)
+    conn = conn_cls(endpoint.host, endpoint.port, pinned_ip, remaining)
     try:
         conn.request(method.upper(), path, body=body, headers=request_headers)
         response = conn.getresponse()
-        response_body = response.read()
+        # Bounded read: never buffer more than max_body_bytes+1 into memory,
+        # regardless of a Content-Length claim or an endless/very large body.
+        # Verified this read(limit+1)-then-check technique directly against a
+        # real socket server before applying -- http.client's read(n) is
+        # itself a bounded socket read, not a buffer-then-truncate.
+        limit = transport_policy.max_body_bytes
+        response_body = response.read(limit + 1)
+        if len(response_body) > limit:
+            raise EndpointPolicyError(
+                "response_body_too_large",
+                f"response body exceeded the {limit}-byte limit",
+            )
         response_headers = tuple(response.getheaders())
     finally:
         conn.close()
 
-    if 300 <= response.status < 400:
+    # 304 (Not Modified), 305 (Use Proxy, deprecated), and 306 (Unused,
+    # reserved) are excluded -- none of them mean "follow Location".
+    if 300 <= response.status < 400 and response.status not in (304, 305, 306):
         location = dict(response_headers).get("Location") or dict(response_headers).get(
             "location"
         )
@@ -251,9 +290,10 @@ def request(
         next_body = body
 
         if _origin(next_url) != _origin(raw_url):
-            _drop_headers_case_insensitive(
-                next_headers, {"Authorization", "Cookie", "Proxy-Authorization"}
-            )
+            credential_headers = {
+                key for key in next_headers if _CREDENTIAL_HEADER_RE.match(key)
+            }
+            _drop_headers_case_insensitive(next_headers, credential_headers)
 
         if response.status in {301, 302, 303}:
             next_method = "GET"
@@ -278,6 +318,7 @@ def request(
             resolver=resolver,
             cancel_check=cancel_check,
             _hop=_hop + 1,
+            _deadline=_deadline,
         )
 
     return TelosResponse(response.status, response_headers, response_body, raw_url)
