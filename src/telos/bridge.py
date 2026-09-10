@@ -13,6 +13,7 @@ import sys
 from .authorizer import EndpointAuthorizer
 from .contracts import EndpointPurpose, EndpointUseDecision, EndpointUseRequest
 from .identity import endpoint_from_url
+from .resolver import resolve_endpoint, _stdlib_resolver
 from .transport import TransportPolicy, request
 from .errors import EndpointPolicyError, TelosError
 from .address import parse_ip
@@ -25,6 +26,16 @@ _CREDENTIAL_HEADER_RE = re.compile(
     r"|.*-(api-key|api-token|auth-token|access-token|secret|token)$",
     re.IGNORECASE,
 )
+
+
+def _all_addresses_loopback(addresses: tuple[str, ...]) -> bool:
+    """True only if every resolved address is loopback -- a mixed set (the
+    same red flag resolve_endpoint's own mixed_address_classification check
+    guards against) is never treated as loopback-exempt."""
+    try:
+        return all(parse_ip(addr).is_loopback for addr in addresses)
+    except EndpointPolicyError:
+        return False
 
 
 class _HostAllowlistAuthorizer:
@@ -40,10 +51,14 @@ class _HostAllowlistAuthorizer:
         self._allowed_hosts = allowed_hosts
 
     def authorize(self, req: EndpointUseRequest) -> EndpointUseDecision:
+        # req.endpoint is an EndpointIdentity -- classify loopback from its
+        # actually-resolved addresses, not endpoint.host (the raw,
+        # pre-resolution hostname string). A *.localhost name that DNS maps
+        # to a public address must not exempt this gate; resolved_addresses
+        # reflects what transport.py actually dialed for this hop.
         host = req.endpoint.endpoint.host
-        # Direct-loopback hosts are exempt, matching handle()'s own original
-        # semantics below -- allowed_hosts only ever gated remote hosts.
-        if not _direct_loopback_host(host) and host not in self._allowed_hosts:
+        loopback = _all_addresses_loopback(req.endpoint.resolved_addresses)
+        if not loopback and host not in self._allowed_hosts:
             return EndpointUseDecision(
                 allowed=False,
                 reason_code="host_not_allowlisted",
@@ -67,16 +82,6 @@ def _purpose(value: str) -> EndpointPurpose:
         return EndpointPurpose(value)
     except ValueError as exc:
         raise ValueError(f"unknown endpoint purpose: {value!r}") from exc
-
-
-def _direct_loopback_host(host: str) -> bool:
-    normalized = host.lower().rstrip(".")
-    if normalized == "localhost" or normalized.endswith(".localhost"):
-        return True
-    try:
-        return bool(parse_ip(normalized).is_loopback)
-    except EndpointPolicyError:
-        return False
 
 
 def handle(payload: dict) -> dict:
@@ -104,7 +109,23 @@ def handle(payload: dict) -> dict:
         str(host).lower().rstrip(".")
         for host in (payload.get("allowed_hosts") or [])
     }
-    if not _direct_loopback_host(endpoint.host):
+    try:
+        early_identity = resolve_endpoint(
+            endpoint,
+            allow_public=True,
+            allow_private=True,
+            allow_loopback=True,
+            resolver=_stdlib_resolver,
+        )
+    except EndpointPolicyError:
+        # A resolution failure here is not loopback-exempt by default --
+        # fall through and let the real, later resolution inside
+        # transport.request() raise the authoritative, correctly-scoped
+        # error under the actual transport policy.
+        is_loopback = False
+    else:
+        is_loopback = _all_addresses_loopback(early_identity.resolved_addresses)
+    if not is_loopback:
         if not allow_remote:
             raise EndpointPolicyError(
                 "remote_denied",
@@ -116,7 +137,7 @@ def handle(payload: dict) -> dict:
                 f"remote host not allowlisted: {endpoint.host}",
             )
     raw_headers = {str(k): str(v) for k, v in (payload.get("headers") or {}).items()}
-    if endpoint.scheme != "https" and not _direct_loopback_host(endpoint.host):
+    if endpoint.scheme != "https" and not is_loopback:
         credential_headers = [k for k in raw_headers if _CREDENTIAL_HEADER_RE.match(k)]
         if credential_headers:
             raise EndpointPolicyError(
