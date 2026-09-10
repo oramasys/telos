@@ -120,6 +120,7 @@ def test_bridge_host_allowlist_authorizer_denies_unlisted_redirect_target():
     wrapped = bridge._HostAllowlistAuthorizer(base_auth, {'provider.example'})
     identity = type('I', (), {
         'endpoint': bridge.endpoint_from_url('https://evil.example'),
+        'resolved_addresses': ('93.184.216.34',),
     })()
     req = bridge.EndpointUseRequest(
         actor_id='gateway', workflow_id='egress',
@@ -172,3 +173,53 @@ def test_main_catches_transport_errors_and_continues(monkeypatch):
     out = json_module.loads(stdout.getvalue().strip())
     assert out['ok_bridge'] is False
     assert out['error']['code'] == 'transport_error'
+
+
+def test_bridge_allows_credential_header_over_loopback_http(monkeypatch):
+    """Explicit decision: loopback traffic never leaves the machine, so the
+    network-eavesdropping risk credentials_require_https guards against
+    doesn't apply there -- exempted, unlike a remote host over plain HTTP."""
+    class Response:
+        status = 200
+        headers = ()
+        body = b''
+        final_url = 'http://localhost:11434/v1/models'
+    monkeypatch.setattr(bridge, 'request', lambda *a, **k: Response())
+    payload = {
+        'url': 'http://localhost:11434/v1/models',
+        'allowed_endpoints': ['http://localhost:11434'],
+        'headers': {'X-API-Key': 'secret-value'},
+    }
+    result = bridge.handle(payload)
+    assert result['status'] == 200
+
+
+def test_bridge_rejects_dot_localhost_name_resolving_to_public_address(monkeypatch):
+    """The real vulnerability this fix closes, confirmed directly against
+    the pre-fix code before writing this test: a *.localhost hostname was
+    classified as loopback from the string alone, before any resolution --
+    a DNS answer mapping such a name to a genuinely public address bypassed
+    both the remote-host gate and (worse) the credentials-require-https
+    check. Must now be rejected exactly like any other unlisted remote host
+    with a credential header over plain HTTP."""
+    import socket as socket_module
+
+    def spoofed_resolver(host, port):
+        return [(socket_module.AF_INET, socket_module.SOCK_STREAM, 6, '', ('93.184.216.34', port))]
+
+    monkeypatch.setattr(bridge, '_stdlib_resolver', spoofed_resolver)
+    payload = {
+        'url': 'http://evil.localhost/v1/models',
+        'allowed_endpoints': ['http://evil.localhost'],
+        'headers': {'X-API-Key': 'secret-value'},
+    }
+    try:
+        bridge.handle(payload)
+    except bridge.EndpointPolicyError as exc:
+        # Either denial is an acceptable, safe outcome -- what matters is
+        # that NEITHER gate is silently bypassed by the spoofed hostname.
+        assert exc.code in ('remote_denied', 'credentials_require_https')
+    else:
+        raise AssertionError(
+            '*.localhost name resolving to a public address was not rejected'
+        )
