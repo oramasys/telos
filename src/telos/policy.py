@@ -1,21 +1,22 @@
-"""Deny-by-default semantic endpoint-use policy."""
+"""Deny-by-default semantic endpoint-use policy.
 
+Transport classification (public/private/loopback and SSRF safety) is owned by
+Telos transport policy. This module answers the distinct semantic question:
+may this purpose use this exact normalized endpoint identity?
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .contracts import EndpointPurpose, EndpointRef
+from .contracts import EndpointIdentity, EndpointPurpose
 
 
 @dataclass(frozen=True, slots=True)
 class PurposeRule:
     allowed_endpoints: frozenset[tuple[str, str, int]]
-    allow_public: bool = False
 
-    def permits(self, endpoint: EndpointRef) -> bool:
-        if endpoint.is_public and not self.allow_public:
-            return False
-        return endpoint.key in self.allowed_endpoints
+    def permits(self, identity: EndpointIdentity) -> bool:
+        return identity.endpoint.key in self.allowed_endpoints
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,11 +24,11 @@ class EndpointPolicy:
     version: str
     rules: dict[EndpointPurpose, PurposeRule]
 
-    def evaluate(self, purpose: EndpointPurpose, endpoint: EndpointRef) -> str:
+    def evaluate(self, purpose: EndpointPurpose, identity: EndpointIdentity) -> str:
         rule = self.rules.get(purpose)
         if rule is None:
             return "unknown_purpose"
-        if not rule.permits(endpoint):
+        if not rule.permits(identity):
             return "endpoint_not_permitted"
         return "allowed"
 
@@ -36,12 +37,14 @@ class EndpointPolicy:
         cls,
         rules: dict[EndpointPurpose, set[tuple[str, str, int]]],
         *,
-        version: str = "telos-policy-v1",
+        version: str = "telos-policy-v2",
     ) -> "EndpointPolicy":
         if not version.strip():
             raise ValueError("policy version is required")
         return cls(
             version=version,
-            rules={purpose: PurposeRule(frozenset(endpoints)) for purpose, endpoints in rules.items()},
+            rules={
+                purpose: PurposeRule(frozenset(endpoints))
+                for purpose, endpoints in rules.items()
+            },
         )
-
