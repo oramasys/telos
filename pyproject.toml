@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "oramasys-telos"
-version = "0.2.0a1"
+version = "1.9.0"
 description = "Canonical endpoint-security authority for Oramasys"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
