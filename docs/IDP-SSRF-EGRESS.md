@@ -15,9 +15,14 @@ separate decisions **inside Telos**. Neither decision is evidence of the other
 (`docs/BOUNDARIES.md`).
 
 Current `EndpointPurpose` values (`config_read`, `health_probe`, `model_egress`)
-are unchanged by this design. The purpose IDs below are the **catalog to
-register** in a later deny-by-default policy pack. Unregistered purposes stay
-`unknown_purpose` and fail closed.
+are unchanged by this design. `src/telos/contracts.py` is a closed `StrEnum`;
+`src/telos/bridge.py` constructs it from the caller string and rejects unknown
+values. A later policy pack can authorize **only members that already exist on
+that enum** (or an equivalent registry). Adding each catalog ID as an enum /
+registry member is a required implementation step **before** policy-pack
+authorization. Until then, those strings never become `EndpointPurpose` values;
+unknown strings fail closed. A policy pack for an unregistered purpose still
+evaluates as `unknown_purpose` / `purpose_denied`.
 
 ---
 
@@ -40,18 +45,22 @@ optional and must not dial around Telos.
 
 ## 2. Operating model
 
-Callers that need JWKS, token, or userinfo material use Telos transport — not a
-direct client. Shape (illustrative; not a new public API in this PR):
+Callers that need JWKS, OIDC discovery, or token material use Telos transport —
+not a direct client. **Userinfo HTTP is out of scope** until a dedicated
+`EndpointPurpose` is added to the catalog and enum; providers must not fetch
+userinfo around Telos, and must fail closed if they still need it. Shape
+(illustrative; not a new public API in this PR):
 
 ```text
-Provider needs JWKS / token / userinfo
+Provider needs JWKS / OIDC discovery / token
         │
         ▼
 telos.request(method, url,
               purpose=<registered EndpointPurpose>,
               authorizer=…, transport_policy=…, resolver=…)
         │
-        ├─ purpose not registered → DENY (unknown_purpose / purpose_denied)
+        ├─ purpose string not on EndpointPurpose → DENY (bridge ValueError)
+        ├─ purpose member with no policy rule → DENY (unknown_purpose)
         ├─ URL host/IP not in purpose allowlist → DENY (endpoint_not_permitted / SSRF)
         ├─ public destination and scheme not https → DENY (https_required)
         ├─ resolved address not allowed by TransportPolicy → DENY
@@ -76,9 +85,11 @@ only.
 
 ## 3. Purpose catalog (initial)
 
-These IDs are the intended `EndpointPurpose` values for a later policy pack.
-Hosts are **examples for operators to confirm at implementation time**, not a
-live allowlist and not a LAN topology.
+These IDs are the intended `EndpointPurpose` **string values** for a later enum
+(or registry) plus deny-by-default policy pack. Hosts are **examples for
+operators to confirm at implementation time**, not a live allowlist and not a
+LAN topology. This catalog is Google/X IdP only; BUZZ relay enrichment is a
+separate later design (MVP remains offline verify).
 
 | Purpose ID | Allowed hosts (examples) | Used by |
 |------------|--------------------------|---------|
@@ -86,11 +97,12 @@ live allowlist and not a LAN topology.
 | `idp-google-jwks` | `www.googleapis.com` (JWKS path only) | ID token verify |
 | `idp-google-token` | `oauth2.googleapis.com` | code exchange (if server-side) |
 | `idp-x-oauth` | `api.x.com` / `x.com` (confirm at impl) | X OAuth |
-| `nostr-relay-read` | operator allowlist only | Optional BUZZ enrichment (**not MVP**) |
 
 Rules for IdP purposes:
 
-- Unknown purpose → deny.
+- String not on `EndpointPurpose` (or equivalent registry) → deny at the
+  boundary (`bridge._purpose` / `ValueError` today).
+- Enum member with no policy rule → deny (`unknown_purpose`).
 - Exact host/scheme/port identity after Telos normalization; path constraints
   (JWKS path only) belong in the policy pack, not in provider-local fetch.
 - No RFC1918, link-local, unspecified, multicast, or cloud-metadata addresses
@@ -98,7 +110,6 @@ Rules for IdP purposes:
   denials) for IdP purposes.
 - IP literals denied unless an operator explicitly allowlists that identity for
   that purpose (IdP catalog does not).
-- `nostr-relay-read` is out of the BUZZ NIP-98 MVP (offline verify only).
 
 ---
 
@@ -109,7 +120,8 @@ Rules for IdP purposes:
 2. Default factory: no Telos egress → network IdP stays disabled.
 3. Unit tests (consumer): mock Telos deny → provider soft-fail; Bearer path
    green.
-4. Operators register purposes in Telos policy before enabling Google/X flags.
+4. Operators enable Google/X flags only after Telos has both enum members and
+   policy rules for those purposes.
 5. Telos CI later: contract tests deny SSRF fixtures (metadata, private,
    rebinding, off-allowlist redirect) for these purposes.
 
@@ -140,9 +152,10 @@ composed and fail-closed:
 
 | Phase | Deliverable |
 |-------|-------------|
-| **Design (this doc)** | Ownership + purpose catalog |
-| **telos policy pack** | Register IdP purposes; exact HTTPS identities; deny-by-default remainder |
-| **oramasys wiring** | Providers call Telos transport only; no raw dial fallback |
+| **Design (this doc)** | Ownership + Google/X purpose catalog |
+| **telos `EndpointPurpose` registry** | Add closed-enum (or equivalent) members in `contracts.py` for each catalog ID; `bridge._purpose` keeps rejecting unknown strings |
+| **telos policy pack** | Authorize those members to exact HTTPS identities; deny-by-default remainder |
+| **oramasys wiring** | Providers call Telos transport only; no raw dial fallback; no userinfo until a purpose exists |
 | **CI** | Contract tests deny SSRF fixtures for IdP purposes |
 
 ---
