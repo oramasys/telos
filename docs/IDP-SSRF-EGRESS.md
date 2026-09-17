@@ -14,15 +14,9 @@ This design sits under the accepted 2026-08-29 Tripwire/Telos split recorded in
 separate decisions **inside Telos**. Neither decision is evidence of the other
 (`docs/BOUNDARIES.md`).
 
-Current `EndpointPurpose` values (`config_read`, `health_probe`, `model_egress`)
-are unchanged by this design. `src/telos/contracts.py` is a closed `StrEnum`;
-`src/telos/bridge.py` constructs it from the caller string and rejects unknown
-values. A later policy pack can authorize **only members that already exist on
-that enum** (or an equivalent registry). Adding each catalog ID as an enum /
-registry member is a required implementation step **before** policy-pack
-authorization. Until then, those strings never become `EndpointPurpose` values;
-unknown strings fail closed. A policy pack for an unregistered purpose still
-evaluates as `unknown_purpose` / `purpose_denied`.
+Catalog purpose IDs in this document are **not** live `EndpointPurpose` enum
+members. `src/telos/contracts.py` currently defines only `config_read`,
+`health_probe`, and `model_egress`. This PR does not add enum members.
 
 ---
 
@@ -32,7 +26,7 @@ evaluates as `unknown_purpose` / `purpose_denied`.
 |-----------|------|--------------|
 | **S-AuthZ / AuthManager** | Inbound HTTP capability, Bearer, optional provider *verify* of already-fetched material | Opening sockets to Google / X / JWKS / relays |
 | **Auth providers (Google / X)** | OAuth/OIDC protocol logic, claim checks, binding subject | Raw `httpx` / `urllib` / equivalent to the public internet |
-| **BUZZ NIP-98** | Offline signature verify (no egress in MVP) | Relay enrichment (optional later → Telos) |
+| **BUZZ NIP-98** | Offline signature verify (no egress in MVP) | Relay dial / enrichment (reserved later → Telos; see Deferred catalog) |
 | **BitChat Noise** | Local BLE / in-process radio; no cloud IdP | WAN egress |
 | **Telos** | Purpose-scoped allowlist of destinations (URL / IP / DNS / TLS pin policy), SSRF deny-by-default, DNS rebinding defenses, reusable `request()` / `authorize_url()` primitives | Deciding if Bearer is valid |
 | **Phylax** | Artifact / runtime admission | IdP endpoints |
@@ -45,21 +39,19 @@ optional and must not dial around Telos.
 
 ## 2. Operating model
 
-Callers that need JWKS, OIDC discovery, or token material use Telos transport —
-not a direct client. **Userinfo HTTP is out of scope** until a dedicated
-`EndpointPurpose` is added to the catalog and enum; providers must not fetch
-userinfo around Telos, and must fail closed if they still need it. Shape
-(illustrative; not a new public API in this PR):
+Callers that need JWKS, OIDC discovery, token, or userinfo material use Telos
+transport — not a direct client. Shape (illustrative; not a new public API in
+this PR):
 
 ```text
-Provider needs JWKS / OIDC discovery / token
+Provider needs JWKS / OIDC discovery / token / userinfo
         │
         ▼
 telos.request(method, url,
               purpose=<registered EndpointPurpose>,
               authorizer=…, transport_policy=…, resolver=…)
         │
-        ├─ purpose string not on EndpointPurpose → DENY (bridge ValueError)
+        ├─ purpose string not on EndpointPurpose → DENY (unknown_purpose / fail closed)
         ├─ purpose member with no policy rule → DENY (unknown_purpose)
         ├─ URL host/IP not in purpose allowlist → DENY (endpoint_not_permitted / SSRF)
         ├─ public destination and scheme not https → DENY (https_required)
@@ -71,7 +63,7 @@ telos.request(method, url,
 **Fail closed:** if Telos is unavailable, the purpose is missing, or transport
 denies, optional IdP providers return `None` / auth miss. **Bearer still
 works.** Enabling `ORAMA_AUTH_GOOGLE` / `ORAMA_AUTH_X` (or successors) without a
-registered Telos purpose must not fall back to raw internet dial.
+fully registered Telos purpose must not fall back to raw internet dial.
 
 **Default composition (Oramasys, later wiring):** if `ORAMA_TELOS_EGRESS=0` or
 Telos is not installed, providers that require network stay disabled
@@ -81,27 +73,40 @@ Loopback HTTP remains a Telos transport-profile choice for tests, not an IdP
 purpose exception. IdP purposes in production are HTTPS public destinations
 only.
 
+### Registration (required before any catalog ID is usable)
+
+Until **all three** steps land, the ID remains unusable and Telos stays
+deny-by-default (`unknown_purpose` / fail closed):
+
+1. Add the purpose ID to `EndpointPurpose` in `src/telos/contracts.py`.
+2. Register allowlist entries for that member in the Telos policy pack.
+3. Wire Oramasys providers to `telos.request(..., purpose=...)` with the
+   registered enum value.
+
+A policy pack cannot invent enum members. `bridge._purpose` constructs
+`EndpointPurpose` from the caller string and rejects unknown values.
+
 ---
 
-## 3. Purpose catalog (initial)
+## 3. Purpose catalog (Google / X IdP only)
 
-These IDs are the intended `EndpointPurpose` **string values** for a later enum
-(or registry) plus deny-by-default policy pack. Hosts are **examples for
-operators to confirm at implementation time**, not a live allowlist and not a
-LAN topology. This catalog is Google/X IdP only; BUZZ relay enrichment is a
-separate later design (MVP remains offline verify).
+These IDs are the **active catalog for this design**. They are intended
+`EndpointPurpose` string values after the three registration steps above. They
+are **not** live enum members today. Hosts are **examples for operators to
+confirm at implementation time**, not a live allowlist and not a LAN topology.
 
 | Purpose ID | Allowed hosts (examples) | Used by |
 |------------|--------------------------|---------|
-| `idp-google-oidc-discovery` | `accounts.google.com` | Google metadata |
+| `idp-google-oidc-discovery` | `accounts.google.com` | Google OIDC metadata |
 | `idp-google-jwks` | `www.googleapis.com` (JWKS path only) | ID token verify |
-| `idp-google-token` | `oauth2.googleapis.com` | code exchange (if server-side) |
-| `idp-x-oauth` | `api.x.com` / `x.com` (confirm at impl) | X OAuth |
+| `idp-google-token` | `oauth2.googleapis.com` | Google token endpoint (code exchange, if server-side) |
+| `idp-google-userinfo` | `openidconnect.googleapis.com` | Google userinfo |
+| `idp-x-oauth` | `api.x.com` / `x.com` (confirm at impl) | X OAuth authorize + token |
+| `idp-x-userinfo` | `api.twitter.com` / `api.x.com` (confirm at impl) | X userinfo |
 
 Rules for IdP purposes:
 
-- String not on `EndpointPurpose` (or equivalent registry) → deny at the
-  boundary (`bridge._purpose` / `ValueError` today).
+- String not on `EndpointPurpose` → deny (`unknown_purpose` / fail closed).
 - Enum member with no policy rule → deny (`unknown_purpose`).
 - Exact host/scheme/port identity after Telos normalization; path constraints
   (JWKS path only) belong in the policy pack, not in provider-local fetch.
@@ -113,16 +118,36 @@ Rules for IdP purposes:
 
 ---
 
-## 4. Integration points (later; not this PR)
+## 4. Deferred catalog (Nostr / BUZZ relay)
 
-1. Inject Telos transport (`request` / composition factory) into Google/X
-   providers. Providers own protocol; Telos owns the socket.
-2. Default factory: no Telos egress → network IdP stays disabled.
-3. Unit tests (consumer): mock Telos deny → provider soft-fail; Bearer path
+These purpose IDs are **reserved for later**. They are not live
+`EndpointPurpose` members. Registering them is a later explicit implementation
+(same three steps as §2). Do not treat reservation as authorization.
+
+BUZZ NIP-98 MVP remains **offline signature verify only** — no relay dial in
+this PR or in the MVP.
+
+| Purpose ID | Status | Notes |
+|------------|--------|-------|
+| `nostr-relay-read` | reserved | Optional later relay read; operator allowlist only when implemented |
+| `nostr-relay-write` | reserved | Optional later relay write; not live |
+| `nostr-relay-enrich` | reserved | Optional later BUZZ enrichment via Telos; not live |
+
+---
+
+## 5. Integration points (later; not this PR)
+
+1. Complete the three registration steps in §2 for each Google/X catalog ID
+   that will be enabled.
+2. Inject Telos transport (`request` / composition factory) into Google/X
+   providers. Providers own protocol; Telos owns the socket. Userinfo uses
+   `idp-google-userinfo` / `idp-x-userinfo` after those IDs are registered.
+3. Default factory: no Telos egress → network IdP stays disabled.
+4. Unit tests (consumer): mock Telos deny → provider soft-fail; Bearer path
    green.
-4. Operators enable Google/X flags only after Telos has both enum members and
-   policy rules for those purposes.
-5. Telos CI later: contract tests deny SSRF fixtures (metadata, private,
+5. Operators enable Google/X flags only after enum members **and** policy rules
+   exist for those purposes.
+6. Telos CI later: contract tests deny SSRF fixtures (metadata, private,
    rebinding, off-allowlist redirect) for these purposes.
 
 Does **not** block local-crypto / header remediation on the auth surface. Network
@@ -131,7 +156,7 @@ enabled in production.
 
 ---
 
-## 5. SSRF checklist (Telos)
+## 6. SSRF checklist (Telos)
 
 Existing Telos primitives already own most of this path (`address.py`,
 `resolver.py`, `transport.py`, `policy.py`). The IdP pack must keep them
@@ -148,15 +173,15 @@ composed and fail-closed:
 
 ---
 
-## 6. Phasing
+## 7. Phasing
 
 | Phase | Deliverable |
 |-------|-------------|
-| **Design (this doc)** | Ownership + Google/X purpose catalog |
-| **telos `EndpointPurpose` registry** | Add closed-enum (or equivalent) members in `contracts.py` for each catalog ID; `bridge._purpose` keeps rejecting unknown strings |
-| **telos policy pack** | Authorize those members to exact HTTPS identities; deny-by-default remainder |
-| **oramasys wiring** | Providers call Telos transport only; no raw dial fallback; no userinfo until a purpose exists |
+| **Design (this doc)** | Ownership + Google/X purpose catalog + Deferred Nostr IDs reserved |
+| **telos `EndpointPurpose` + policy pack** | Steps 1–2 of registration for Google/X catalog IDs; exact HTTPS identities; deny-by-default remainder |
+| **oramasys wiring** | Step 3: providers call `telos.request(..., purpose=...)` only; no raw dial fallback |
 | **CI** | Contract tests deny SSRF fixtures for IdP purposes |
+| **Deferred (later)** | Nostr relay purposes + optional BUZZ relay enrichment via Telos (IDs reserved in Deferred catalog) |
 
 ---
 
