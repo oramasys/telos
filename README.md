@@ -19,6 +19,6 @@ Telos owns:
 - purpose-scoped endpoint-use authorization;
 - reusable safe transport primitives for provider adapters.
 
-Provider packages own provider protocol and lifecycle semantics, not endpoint-security primitives. `oramasys/Claude-Desktop-LLM/src/policy/endpoint-policy.ts` and the v1 Perpetua-Tools endpoint-policy/SSRF stack are migration evidence, not permanent competing v2 authorities. v2 has no runtime dependency on v1 PT.
+Provider packages own provider protocol and lifecycle semantics, not endpoint-security primitives. Optional IdP providers (Google / X) verify already-fetched material; Telos owns where JWKS/token HTTP may go (`docs/IDP-SSRF-EGRESS.md`). Local Bearer/gossip remain root of trust. `oramasys/Claude-Desktop-LLM/src/policy/endpoint-policy.ts` and the v1 Perpetua-Tools endpoint-policy/SSRF stack are migration evidence, not permanent competing v2 authorities. v2 has no runtime dependency on v1 PT.
 
 Telos uses the Apache License 2.0, matching the endpoint-policy package authority it replaces.
