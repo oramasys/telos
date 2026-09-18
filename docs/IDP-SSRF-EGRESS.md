@@ -2,8 +2,10 @@
 
 **Date:** 2026-09-16
 **Research and contract review:** 2026-09-17 UTC
-**Status:** DESIGN (draft). Local auth-surface work remains elsewhere; Telos
-implementation of an IdP policy pack and Oramasys wiring may land later.
+**Status:** DESIGN, Step 1 of 3 landed. `EndpointPurpose` now carries the six
+Google/X catalog members (Step 1) -- they grant no access by themselves,
+since no trusted request-profile pack (Step 2) or Oramasys wiring (Step 3)
+exists yet. Local auth-surface work remains elsewhere.
 **Invariant:** Local Bearer/gossip remain root of trust. Absence of an IdP
 provider never disables local auth. Telos owns **where** outbound IdP / JWKS /
 token / userinfo HTTP may go — not operator identity itself.
@@ -18,9 +20,11 @@ Telos is the sole v2 endpoint-security authority; compose semantic allow **and**
 transport safety before dial; v1 PT SSRF is golden evidence only (no runtime
 import).
 
-Catalog purpose IDs in this document are **not** live `EndpointPurpose` enum
-members. `src/telos/contracts.py` currently defines only `config_read`,
-`health_probe`, and `model_egress`. This PR does not add enum members.
+Catalog purpose IDs are now live `EndpointPurpose` members (Step 1,
+`src/telos/contracts.py`). Registering the enum grants no access by itself:
+`EndpointPolicy.evaluate()` still returns `unknown_purpose` for every one of
+them until Step 2 (a trusted request-profile pack) exists -- proven directly
+by `src/tests/test_contracts.py`. Steps 2 and 3 remain outstanding.
 
 ---
 
@@ -161,9 +165,10 @@ never forwards credentials in headers or bodies to another origin.
 ### Registration (required before any catalog ID is usable)
 
 Until **all three** steps land and their acceptance tests pass, the ID remains
-unusable by the IdP composition:
+unusable by the IdP composition. Step 1 has landed for all six catalog IDs;
+steps 2 and 3 remain outstanding for every one of them:
 
-1. Add the purpose ID to `EndpointPurpose` in `src/telos/contracts.py`.
+1. ~~Add the purpose ID to `EndpointPurpose` in `src/telos/contracts.py`.~~ **Done.**
 2. Register that member's complete trusted profile in Telos: exact origin,
    enforced method/path/query constraints, credential handling, public-only
    transport, no redirects, and bounded requests/responses.
@@ -178,13 +183,14 @@ A policy pack cannot invent enum members. `bridge._purpose` constructs
 
 ## 3. Purpose catalog (Google / X IdP only)
 
-These IDs are the **active catalog for this design**. They are intended
-`EndpointPurpose` string values after the three registration steps above. They
-are **not** live enum members today. The endpoint baseline below was checked
-against [Google's discovery document][google-discovery], [Google OIDC
-guidance][google-oidc], [X OAuth documentation][x-oauth], and [X Users Me][x-me]
-on 2026-09-17 UTC. Reconfirm it when implementing; this table is not a live
-allowlist. Every origin is exactly `(https, host, 443)`, without wildcards.
+These IDs are the **active catalog for this design**, and are now live
+`EndpointPurpose` string values (Step 1, landed). They grant no access without
+the request-profile pack from Step 2, not yet built. The endpoint baseline
+below was checked against [Google's discovery document][google-discovery],
+[Google OIDC guidance][google-oidc], [X OAuth documentation][x-oauth], and
+[X Users Me][x-me] on 2026-09-17 UTC. Reconfirm it when implementing; this
+table is not a live allowlist. Every origin is exactly `(https, host, 443)`,
+without wildcards.
 
 | Purpose ID | Host | Method and exact path | Used by |
 | --- | --- | --- | --- |
@@ -296,7 +302,7 @@ that the future IdP boundary is implemented.
 | Phase | Deliverable |
 |-------|-------------|
 | **Design (this doc)** | Ownership + Google/X purpose catalog |
-| **Telos enum + request profiles** | Steps 1–2 for selected Google/X operations: exact identities, method/path enforcement and trusted public-only/no-redirect composition |
+| **Telos enum + request profiles** | Step 1 done (enum members landed, grant no access). Step 2 outstanding for selected Google/X operations: exact identities, method/path enforcement and trusted public-only/no-redirect composition |
 | **Oramasys wiring** | Step 3: bound operations call Telos with explicit purpose; no raw bridge policy, direct socket, or missing-purpose fallback |
 | **Activation evidence** | Telos and consumer acceptance checks in §5 pass before enabling network IdP |
 

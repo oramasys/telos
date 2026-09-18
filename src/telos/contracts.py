@@ -7,6 +7,22 @@ from typing import Protocol
 import ipaddress
 class EndpointPurpose(StrEnum):
     CONFIG_READ="config_read"; HEALTH_PROBE="health_probe"; MODEL_EGRESS="model_egress"
+    # IdP purpose IDs registered per docs/IDP-SSRF-EGRESS.md Step 1 of 3. Adding
+    # these members grants no access by itself -- EndpointPolicy.evaluate()
+    # still returns "unknown_purpose" for any purpose with no rule in a
+    # trusted pack (policy.py), and no such pack exists for these yet. Steps
+    # 2 (request-profile enforcement: exact method/path/query, not just
+    # origin) and 3 (Oramasys provider wiring) remain separate, later work.
+    # idp-x-oauth is intentionally NOT a member: the design doc supersedes it
+    # with IDP_X_TOKEN for server HTTP plus a browser-only authorization
+    # flow Telos never server-fetches. Preserve the old ID as historical
+    # provenance in the doc; do not register or alias it here.
+    IDP_GOOGLE_OIDC_DISCOVERY="idp-google-oidc-discovery"
+    IDP_GOOGLE_JWKS="idp-google-jwks"
+    IDP_GOOGLE_TOKEN="idp-google-token"
+    IDP_GOOGLE_USERINFO="idp-google-userinfo"
+    IDP_X_TOKEN="idp-x-token"
+    IDP_X_USERINFO="idp-x-userinfo"
 @dataclass(frozen=True, slots=True)
 class EndpointRef:
     scheme:str; host:str; port:int
