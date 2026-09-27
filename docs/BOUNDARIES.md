@@ -17,6 +17,11 @@ Telos owns **all endpoint-specific security**. This restores the accepted 2026-0
 
 A semantic `EndpointUseDecision` is not transport-safety evidence by itself. A transport-safe endpoint is not purpose-authorized by itself. Telos composes both decisions before network use.
 
+Optional constellation IdP providers (Google / X) must not dial the public
+internet raw. Telos owns purpose-scoped IdP/JWKS/token egress and SSRF
+deny-by-default for those paths. Local Bearer/gossip remain root of trust; IdP
+absence never disables local auth. See `docs/IDP-SSRF-EGRESS.md`.
+
 ## Migration evidence
 
 - v1 PT `packages/endpoint-policy`, `src/utils/endpoint_policy_core.py`, `src/utils/ssrf_fetch_policy.py`, and `src/utils/ssrf_pinned_adapter.py` are read-only golden evidence.
