@@ -13,6 +13,7 @@ Telos owns **all endpoint-specific security**. This restores the accepted 2026-0
 | Provider protocol/readiness/lifecycle | provider owner / Oramasys composition |
 | Hardware capability and placement | Agate |
 | Generic runtime security/safety/admission/monitorability | Phylax |
+| Generic execution primitives and event contracts | Core (`oramasys/perpetua-core`) |
 | Workflow state, idempotency, routing and progress | Oramasys |
 
 A semantic `EndpointUseDecision` is not transport-safety evidence by itself. A transport-safe endpoint is not purpose-authorized by itself. Telos composes both decisions before network use.
