@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from telos import EndpointAuthorizer, EndpointPurpose, EndpointRef, EndpointUseRequest, resolve_endpoint
+from telos import EndpointAuthorizer, EndpointPurpose, EndpointRef, EndpointUseDecision, EndpointUseRequest, resolve_endpoint
 from telos.policy import EndpointPolicy
 
 
@@ -56,6 +56,27 @@ def test_decision_without_expiry_is_not_current():
     decision = auth.authorize(request())
     from dataclasses import replace
     assert not auth.is_current(replace(decision, expires_at=None))
+
+
+def test_is_current_rejects_a_caller_constructed_future_decision():
+    clock = Clock()
+    auth = EndpointAuthorizer.from_exact_rules(RULES, clock=clock)
+    forged = EndpointUseDecision(
+        allowed=True,
+        reason_code="allowed",
+        policy_version="telos-policy-v2",
+        decision_ref="forged",
+        endpoint=identity(),
+        expires_at=clock.now + timedelta(minutes=1),
+    )
+    assert not auth.is_current(forged)
+
+
+def test_policy_epoch_change_invalidates_an_issued_decision():
+    auth = EndpointAuthorizer.from_exact_rules(RULES, clock=Clock())
+    decision = auth.authorize(request())
+    auth.revoke()
+    assert not auth.is_current(decision)
 
 
 def test_ttl_and_clock_are_validated():

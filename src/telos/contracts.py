@@ -60,7 +60,7 @@ class EndpointUseRequest:
             if not getattr(self,field_name).strip(): raise ValueError(f"{field_name} is required")
 @dataclass(frozen=True, slots=True)
 class EndpointUseDecision:
-    allowed:bool; reason_code:str; policy_version:str; decision_ref:str; endpoint:EndpointIdentity; expires_at:datetime|None=None
+    allowed:bool; reason_code:str; policy_version:str; decision_ref:str; endpoint:EndpointIdentity; expires_at:datetime|None=None; authority_epoch:int=0
 @dataclass(frozen=True, slots=True)
 class DecisionRecord:
     request:EndpointUseRequest; decision:EndpointUseDecision; recorded_at:datetime
