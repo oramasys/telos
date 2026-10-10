@@ -64,3 +64,34 @@ def test_ttl_and_clock_are_validated():
     naive = EndpointAuthorizer.from_exact_rules(RULES, clock=lambda: datetime(2026, 1, 1))
     with pytest.raises(ValueError):
         naive.authorize(request())
+
+
+# --- review fixes -------------------------------------------------------------
+
+
+def test_is_current_returns_false_for_naive_expiry_instead_of_crashing():
+    from dataclasses import replace
+
+    clock = Clock()
+    auth = EndpointAuthorizer.from_exact_rules(RULES, clock=clock)
+    decision = auth.authorize(request())
+    assert not auth.is_current(replace(decision, expires_at=datetime(2030, 1, 1)))
+
+
+def test_dialer_uses_the_authorizers_clock_for_freshness():
+    import asyncio
+
+    from telos.dialer import SecureDialer
+    from test_dialer import FakeConnector, FakeResolver
+    from test_dialer import request as dial_request
+
+    endpoint = EndpointRef("http", "ollama.local", 11434)
+    past = Clock()
+    past.now = datetime(2001, 1, 1, tzinfo=UTC)  # frozen far before wall-clock now
+    auth = EndpointAuthorizer.from_exact_rules({EndpointPurpose.HEALTH_PROBE: {endpoint.key}}, clock=past)
+    connector = FakeConnector("127.0.0.1")
+    dialer = SecureDialer(authorizer=auth, resolver=FakeResolver({endpoint.host: ["127.0.0.1"]}).resolve,
+                          connector=connector)
+    result = asyncio.run(dialer.dial(dial_request(endpoint)))
+    assert result.reason_code != "authorization_expired"
+    assert connector.calls

@@ -53,7 +53,14 @@ class EndpointAuthorizer:
         return decision
     def is_current(self, decision: EndpointUseDecision) -> bool:
         """True only for an allowed decision that has an expiry still in the future."""
-        return decision.allowed and decision.expires_at is not None and self._now() < decision.expires_at
+        expires_at = decision.expires_at
+        return (
+            decision.allowed
+            and expires_at is not None
+            and expires_at.tzinfo is not None
+            and expires_at.utcoffset() is not None
+            and self._now() < expires_at
+        )
     @property
     def records(self) -> tuple[DecisionRecord, ...]:
         return tuple(self._records)

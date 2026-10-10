@@ -126,7 +126,7 @@ class SecureDialer:
                     return SecureDialResult(
                         False, "authorization_endpoint_mismatch", identity, decision
                     )
-                if _decision_is_expired(decision):
+                if _decision_is_expired(decision, self._authorizer):
                     return SecureDialResult(
                         False, "authorization_expired", identity, decision
                     )
@@ -204,10 +204,16 @@ class SecureDialer:
         )
 
 
-def _decision_is_expired(decision: EndpointUseDecision) -> bool:
+def _decision_is_expired(decision: EndpointUseDecision, authorizer: object = None) -> bool:
     expires_at = decision.expires_at
-    return expires_at is not None and (
-        expires_at.tzinfo is None
-        or expires_at.utcoffset() is None
-        or expires_at <= datetime.now(UTC)
-    )
+    if expires_at is None:
+        return False
+    if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+        return True
+    # Prefer the issuing authorizer's own freshness check, so an injected clock is
+    # used consistently for issuing and checking. Other authorizers fall back to
+    # the wall clock.
+    is_current = getattr(authorizer, "is_current", None)
+    if decision.allowed and callable(is_current):
+        return not is_current(decision)
+    return expires_at <= datetime.now(UTC)
