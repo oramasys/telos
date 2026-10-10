@@ -25,13 +25,16 @@ AsyncResolver = Callable[[str], Awaitable[Sequence[str]]]
 
 
 class SecureDialAuthorizer(Protocol):
+    """Authorizer consulted by the secure dialer."""
     def authorize(
         self, request: EndpointUseRequest
-    ) -> EndpointUseDecision | Awaitable[EndpointUseDecision]: ...
+    ) -> EndpointUseDecision | Awaitable[EndpointUseDecision]:
+        """Return the use decision for the dial request."""
 
 
 @dataclass(frozen=True, slots=True)
 class SecureDialRequest:
+    """Request to dial an endpoint for a purpose."""
     endpoint: EndpointRef
     purpose: EndpointPurpose
     actor_id: str
@@ -44,6 +47,7 @@ class SecureDialRequest:
     timeout_seconds: float = 10.0
 
     def __post_init__(self) -> None:
+        """Validate the fields at construction and fail closed on bad input."""
         for field_name in ("actor_id", "workflow_id", "run_id"):
             if not getattr(self, field_name).strip():
                 raise ValueError(f"{field_name} is required")
@@ -53,10 +57,12 @@ class SecureDialRequest:
 
 @dataclass(frozen=True, slots=True)
 class ConnectedPeer:
+    """Peer reached by a connector and its verified identity."""
     provider_ref: str
     peer_address: str
 
     def __post_init__(self) -> None:
+        """Validate the fields at construction and fail closed on bad input."""
         if not self.provider_ref.strip():
             raise ValueError("provider_ref is required")
         if not self.peer_address.strip():
@@ -64,6 +70,7 @@ class ConnectedPeer:
 
 
 class SecureDialConnector(Protocol):
+    """Connector that opens a connection to an authorized endpoint."""
     async def connect(
         self,
         *,
@@ -71,11 +78,13 @@ class SecureDialConnector(Protocol):
         pinned_address: str,
         purpose: EndpointPurpose,
         timeout_seconds: float,
-    ) -> ConnectedPeer: ...
+    ) -> ConnectedPeer:
+        """Open a connection to the authorized endpoint."""
 
 
 @dataclass(frozen=True, slots=True)
 class SecureDialResult:
+    """Outcome of a dial: connected peer or refusal reason."""
     allowed: bool
     reason_code: str
     endpoint_identity: EndpointIdentity | None = None
@@ -93,11 +102,13 @@ class SecureDialer:
         resolver: AsyncResolver,
         connector: SecureDialConnector,
     ) -> None:
+        """Bind the resolver, authorizer and connector used for every dial."""
         self._authorizer = authorizer
         self._resolver = resolver
         self._connector = connector
 
     async def dial(self, request: SecureDialRequest) -> SecureDialResult:
+        """Authorize, connect and re-verify freshness before returning the peer."""
         try:
             async with asyncio.timeout(request.timeout_seconds):
                 identity = await self._resolve(request)
@@ -162,6 +173,7 @@ class SecureDialer:
             return SecureDialResult(False, exc.code)
 
     async def _resolve(self, request: SecureDialRequest) -> EndpointIdentity:
+        """Resolve the endpoint identity for a dial request."""
         endpoint = request.endpoint
         try:
             literal = parse_ip(endpoint.host)
@@ -208,6 +220,7 @@ def _decision_is_expired(decision: EndpointUseDecision, authorizer: object = Non
     # Prefer the issuing authorizer's own freshness check, so an injected clock and
     # its revocation state apply even to decisions without an expiry. Authorizers
     # without is_current keep the original expiry checks.
+    """Report whether a decision is expired or no longer current, failing closed."""
     is_current = getattr(authorizer, "is_current", None)
     if decision.allowed and callable(is_current):
         return not is_current(decision)

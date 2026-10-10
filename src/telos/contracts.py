@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import Protocol
 import ipaddress
 class EndpointPurpose(StrEnum):
+    """Purpose an endpoint may be used for."""
     CONFIG_READ="config_read"; HEALTH_PROBE="health_probe"; MODEL_EGRESS="model_egress"
     # IdP purpose IDs registered per docs/IDP-SSRF-EGRESS.md Step 1 of 3. Adding
     # these members grants no access by itself -- EndpointPolicy.evaluate()
@@ -25,8 +26,10 @@ class EndpointPurpose(StrEnum):
     IDP_X_USERINFO="idp-x-userinfo"
 @dataclass(frozen=True, slots=True)
 class EndpointRef:
+    """Scheme, host and port of an endpoint."""
     scheme:str; host:str; port:int
     def __post_init__(self)->None:
+        """Validate the fields at construction and fail closed on bad input."""
         scheme = self.scheme.strip().lower()
         host = self.host.strip().lower().rstrip(".")
         if scheme not in {"http", "https"}:
@@ -45,28 +48,40 @@ class EndpointRef:
         object.__setattr__(self, "scheme", scheme)
         object.__setattr__(self, "host", host)
     @property
-    def key(self): return self.scheme,self.host,self.port
+    def key(self):
+        """Return the (scheme, host, port) lookup key."""
+        return self.scheme,self.host,self.port
 @dataclass(frozen=True, slots=True)
 class EndpointIdentity:
+    """Verified identity of a resolved endpoint."""
     endpoint:EndpointRef; resolved_addresses:tuple[str,...]; is_public:bool; resolution_ref:str
     def __post_init__(self):
+        """Validate the fields at construction and fail closed on bad input."""
         if not self.resolved_addresses: raise ValueError("resolved_addresses must not be empty")
         if not self.resolution_ref.strip(): raise ValueError("resolution_ref is required")
 @dataclass(frozen=True, slots=True)
 class EndpointUseRequest:
+    """Request to use an endpoint for a purpose."""
     actor_id:str; workflow_id:str; purpose:EndpointPurpose; endpoint:EndpointIdentity; run_id:str
     def __post_init__(self):
+        """Validate the fields at construction and fail closed on bad input."""
         for field_name in ("actor_id","workflow_id","run_id"):
             if not getattr(self,field_name).strip(): raise ValueError(f"{field_name} is required")
 @dataclass(frozen=True, slots=True)
 class EndpointUseDecision:
+    """Result of an endpoint-use check with expiry and policy epoch."""
     allowed:bool; reason_code:str; policy_version:str; decision_ref:str; endpoint:EndpointIdentity; expires_at:datetime|None=None; authority_epoch:int=0
 @dataclass(frozen=True, slots=True)
 class DecisionRecord:
+    """Immutable record of one issued decision."""
     request:EndpointUseRequest; decision:EndpointUseDecision; recorded_at:datetime
 @dataclass(frozen=True, slots=True)
 class AuthorizedEndpoint:
+    """Endpoint together with the decision that authorizes it."""
     identity:EndpointIdentity; purpose_decision:EndpointUseDecision
 class TelosPort(Protocol):
-    def authorize(self, request:EndpointUseRequest)->EndpointUseDecision: ...
-    def is_current(self, decision:EndpointUseDecision)->bool: ...
+    """Port exposing endpoint authorization and decision freshness."""
+    def authorize(self, request:EndpointUseRequest)->EndpointUseDecision:
+        """Decide whether the endpoint may be used for the purpose."""
+    def is_current(self, decision:EndpointUseDecision)->bool:
+        """Report whether the decision is still current (unexpired and unrevoked)."""

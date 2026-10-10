@@ -10,19 +10,24 @@ from telos.policy import EndpointPolicy
 
 
 def resolver(host, port):
+    """Test helper: resolver."""
     return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.0.0.5", port))]
 
 
 def identity():
+    """Test helper: identity."""
     return resolve_endpoint(EndpointRef("https", "model.internal", 443), allow_public=False,
                             allow_private=True, allow_loopback=False, resolver=resolver)
 
 
 class Clock:
+    """Settable clock for deterministic tests."""
     def __init__(self):
+        """Initialise the instance and validate its arguments."""
         self.now = datetime(2026, 10, 10, tzinfo=UTC)
 
     def __call__(self):
+        """Return the current value."""
         return self.now
 
 
@@ -30,10 +35,12 @@ RULES = {EndpointPurpose.HEALTH_PROBE: {("https", "model.internal", 443)}}
 
 
 def request():
+    """Test helper: request."""
     return EndpointUseRequest("gateway", "readiness", EndpointPurpose.HEALTH_PROBE, identity(), "run-1")
 
 
 def test_allowed_decision_expires_after_the_ttl():
+    """Allowed decision expires after the ttl."""
     clock = Clock()
     auth = EndpointAuthorizer(EndpointPolicy.from_exact_rules(RULES), decision_ttl=timedelta(seconds=10), clock=clock)
     decision = auth.authorize(request())
@@ -44,6 +51,7 @@ def test_allowed_decision_expires_after_the_ttl():
 
 
 def test_denied_decision_is_never_current():
+    """Denied decision is never current."""
     auth = EndpointAuthorizer.from_exact_rules({}, clock=Clock())
     decision = auth.authorize(request())
     assert not decision.allowed
@@ -51,6 +59,7 @@ def test_denied_decision_is_never_current():
 
 
 def test_decision_without_expiry_is_not_current():
+    """Decision without expiry is not current."""
     clock = Clock()
     auth = EndpointAuthorizer.from_exact_rules(RULES, clock=clock)
     decision = auth.authorize(request())
@@ -59,6 +68,7 @@ def test_decision_without_expiry_is_not_current():
 
 
 def test_is_current_rejects_a_caller_constructed_future_decision():
+    """Is current rejects a caller constructed future decision."""
     clock = Clock()
     auth = EndpointAuthorizer.from_exact_rules(RULES, clock=clock)
     forged = EndpointUseDecision(
@@ -73,6 +83,7 @@ def test_is_current_rejects_a_caller_constructed_future_decision():
 
 
 def test_policy_epoch_change_invalidates_an_issued_decision():
+    """Policy epoch change invalidates an issued decision."""
     auth = EndpointAuthorizer.from_exact_rules(RULES, clock=Clock())
     decision = auth.authorize(request())
     auth.revoke()
@@ -80,6 +91,7 @@ def test_policy_epoch_change_invalidates_an_issued_decision():
 
 
 def test_ttl_and_clock_are_validated():
+    """Ttl and clock are validated."""
     with pytest.raises(ValueError):
         EndpointAuthorizer.from_exact_rules(RULES, decision_ttl=timedelta(0))
     naive = EndpointAuthorizer.from_exact_rules(RULES, clock=lambda: datetime(2026, 1, 1))
@@ -91,6 +103,7 @@ def test_ttl_and_clock_are_validated():
 
 
 def test_is_current_returns_false_for_naive_expiry_instead_of_crashing():
+    """Is current returns false for naive expiry instead of crashing."""
     from dataclasses import replace
 
     clock = Clock()
@@ -100,6 +113,7 @@ def test_is_current_returns_false_for_naive_expiry_instead_of_crashing():
 
 
 def test_dialer_uses_the_authorizers_clock_for_freshness():
+    """Dialer uses the authorizers clock for freshness."""
     import asyncio
 
     from telos.dialer import SecureDialer
@@ -119,6 +133,7 @@ def test_dialer_uses_the_authorizers_clock_for_freshness():
 
 
 def test_concurrent_authorizations_are_all_current():
+    """Concurrent authorizations are all current."""
     import threading
 
     auth = EndpointAuthorizer.from_exact_rules(RULES, clock=Clock())
@@ -126,6 +141,7 @@ def test_concurrent_authorizations_are_all_current():
     lock = threading.Lock()
 
     def worker():
+        """Test helper: worker."""
         for _ in range(200):
             d = auth.authorize(request())
             with lock:
@@ -148,6 +164,7 @@ def test_concurrent_authorizations_are_all_current():
 
 
 def test_dialer_asks_is_current_even_without_expiry():
+    """Dialer asks is current even without expiry."""
     from dataclasses import replace
 
     from telos.dialer import _decision_is_expired
@@ -156,7 +173,9 @@ def test_dialer_asks_is_current_even_without_expiry():
     decision = replace(auth.authorize(request()), expires_at=None)
 
     class Revoked:
+        """Test helper Revoked."""
         def is_current(self, _decision):
+            """Report whether the decision is still current (unexpired and unrevoked)."""
             return False
 
     assert _decision_is_expired(decision, Revoked())

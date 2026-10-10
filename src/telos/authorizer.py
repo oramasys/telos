@@ -8,6 +8,7 @@ from .contracts import DecisionRecord, EndpointPurpose, EndpointUseDecision, End
 from .policy import EndpointPolicy
 
 class EndpointAuthorizer:
+    """Exact-rule endpoint authority issuing expiring, revocable decisions."""
     def __init__(
         self,
         policy: EndpointPolicy,
@@ -15,6 +16,7 @@ class EndpointAuthorizer:
         decision_ttl: timedelta = timedelta(minutes=5),
         clock: Callable[[], datetime] | None = None,
     ) -> None:
+        """Initialise the instance and validate its arguments."""
         if decision_ttl <= timedelta(0):
             raise ValueError("decision_ttl must be positive")
         self._policy = policy
@@ -35,13 +37,16 @@ class EndpointAuthorizer:
         decision_ttl: timedelta = timedelta(minutes=5),
         clock: Callable[[], datetime] | None = None,
     ) -> "EndpointAuthorizer":
+        """Build an authorizer from exact endpoint and purpose rules."""
         return cls(EndpointPolicy.from_exact_rules(rules, version=version), decision_ttl=decision_ttl, clock=clock)
     def _now(self) -> datetime:
+        """Return the injected clock reading as an aware UTC datetime."""
         now = self._clock()
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("Telos clock must return an aware UTC datetime")
         return now.astimezone(UTC)
     def authorize(self, request: EndpointUseRequest) -> EndpointUseDecision:
+        """Authorize one endpoint use and record the issued decision."""
         reason_code = self._policy.evaluate(request.purpose, request.endpoint)
         allowed = reason_code == "allowed"
         now = self._now()
@@ -69,6 +74,7 @@ class EndpointAuthorizer:
         return decision
 
     def revoke(self) -> int:
+        """Revoke every issued decision and return how many were revoked."""
         with self._lock:
             self._epoch += 1
             self._issued.clear()
@@ -91,4 +97,5 @@ class EndpointAuthorizer:
         )
     @property
     def records(self) -> tuple[DecisionRecord, ...]:
+        """Return the immutable issuance records."""
         return tuple(self._records)
