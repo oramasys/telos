@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from secrets import token_urlsafe
+from threading import Lock
 from .contracts import DecisionRecord, EndpointPurpose, EndpointUseDecision, EndpointUseRequest
 from .policy import EndpointPolicy
 
@@ -20,6 +21,9 @@ class EndpointAuthorizer:
         self._records: list[DecisionRecord] = []
         self._epoch = 1
         self._issued: dict[str, EndpointUseDecision] = {}
+        # One lock for pruning, issuing, revoking and checking, so concurrent
+        # authorize() calls can never drop another call's issued decision.
+        self._lock = Lock()
         self._ttl = decision_ttl
         self._clock = clock or (lambda: datetime.now(UTC))
     @classmethod
@@ -41,39 +45,45 @@ class EndpointAuthorizer:
         reason_code = self._policy.evaluate(request.purpose, request.endpoint)
         allowed = reason_code == "allowed"
         now = self._now()
-        self._issued = {
-            decision_ref: issued
-            for decision_ref, issued in self._issued.items()
-            if issued.expires_at is not None and now < issued.expires_at
-        }
-        decision = EndpointUseDecision(
-            allowed=allowed,
-            reason_code=reason_code,
-            policy_version=self._policy.version,
-            decision_ref=token_urlsafe(18),
-            endpoint=request.endpoint,
-            # Allowed decisions expire (R4 T1): callers re-check before every
-            # execution boundary instead of trusting a decision forever.
-            expires_at=now + self._ttl if allowed else None,
-            authority_epoch=self._epoch,
-        )
-        if allowed:
-            self._issued[decision.decision_ref] = decision
-        self._records.append(DecisionRecord(request=request, decision=decision, recorded_at=now))
+        with self._lock:
+            # Prune expired entries in place and issue under the same lock, so the
+            # epoch on the decision is the one current at issuance and concurrent
+            # calls can never drop each other's entries.
+            for ref in [r for r, d in self._issued.items()
+                        if d.expires_at is None or now >= d.expires_at]:
+                del self._issued[ref]
+            decision = EndpointUseDecision(
+                allowed=allowed,
+                reason_code=reason_code,
+                policy_version=self._policy.version,
+                decision_ref=token_urlsafe(18),
+                endpoint=request.endpoint,
+                # Allowed decisions expire (R4 T1): callers re-check before every
+                # execution boundary instead of trusting a decision forever.
+                expires_at=now + self._ttl if allowed else None,
+                authority_epoch=self._epoch,
+            )
+            if allowed:
+                self._issued[decision.decision_ref] = decision
+            self._records.append(DecisionRecord(request=request, decision=decision, recorded_at=now))
         return decision
 
     def revoke(self) -> int:
-        self._epoch += 1
-        self._issued.clear()
-        return self._epoch
+        with self._lock:
+            self._epoch += 1
+            self._issued.clear()
+            return self._epoch
 
     def is_current(self, decision: EndpointUseDecision) -> bool:
         """True only for an allowed decision that has an expiry still in the future."""
         expires_at = decision.expires_at
+        with self._lock:
+            issued = self._issued.get(decision.decision_ref)
+            epoch = self._epoch
         return (
-            self._issued.get(decision.decision_ref) == decision
+            issued == decision
             and decision.allowed
-            and decision.authority_epoch == self._epoch
+            and decision.authority_epoch == epoch
             and expires_at is not None
             and expires_at.tzinfo is not None
             and expires_at.utcoffset() is not None

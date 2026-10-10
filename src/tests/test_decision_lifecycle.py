@@ -116,3 +116,48 @@ def test_dialer_uses_the_authorizers_clock_for_freshness():
     result = asyncio.run(dialer.dial(dial_request(endpoint)))
     assert result.reason_code != "authorization_expired"
     assert connector.calls
+
+
+def test_concurrent_authorizations_are_all_current():
+    import threading
+
+    auth = EndpointAuthorizer.from_exact_rules(RULES, clock=Clock())
+    decisions = []
+    lock = threading.Lock()
+
+    def worker():
+        for _ in range(200):
+            d = auth.authorize(request())
+            with lock:
+                decisions.append(d)
+
+    import sys
+
+    old = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)  # switch threads constantly so a lost update shows up
+    try:
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(old)
+    assert len(decisions) == 1600
+    assert all(auth.is_current(d) for d in decisions)
+
+
+def test_dialer_asks_is_current_even_without_expiry():
+    from dataclasses import replace
+
+    from telos.dialer import _decision_is_expired
+
+    auth = EndpointAuthorizer.from_exact_rules(RULES, clock=Clock())
+    decision = replace(auth.authorize(request()), expires_at=None)
+
+    class Revoked:
+        def is_current(self, _decision):
+            return False
+
+    assert _decision_is_expired(decision, Revoked())
+    assert not _decision_is_expired(decision, object())  # no is_current: old fallback
