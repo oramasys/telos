@@ -25,12 +25,22 @@ from .resolver import Resolver, resolve_endpoint
 
 @dataclass(frozen=True, slots=True)
 class TransportPolicy:
+    """Transport policy. ``trust_env`` must stay False: proxy environment
+    variables (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY) are never read, so
+    a hop always dials its vetted, pinned IP directly. True is refused."""
+
+    trust_env: bool = False
     allow_public: bool = False
     allow_private: bool = False
     allow_loopback: bool = True
     require_https_for_public: bool = True
     max_redirects: int = 3
     max_body_bytes: int = 10_485_760  # 10 MiB -- see docs/BOUNDARIES.md for rationale
+
+    def __post_init__(self) -> None:
+        """Refuse any trust_env value other than False."""
+        if self.trust_env is not False:
+            raise ValueError("trust_env=False is the only allowed value")
 
 
 @dataclass(frozen=True, slots=True)
