@@ -92,8 +92,9 @@ def test_error_body_shape_is_exact():
     body = build_error_body("serving.not_ready", cid)
     assert body == {"error": {"code": "serving.not_ready", "correlation_id": cid}}
     with_ref = build_error_body("deny.revoked_grant", cid, receipt_ref="opaque-1")
-    assert with_ref == {"error": {"code": "deny.revoked_grant", "correlation_id": cid},
-                        "receipt_ref": "opaque-1"}
+    assert with_ref == {"error": {"code": "deny.revoked_grant", "correlation_id": cid,
+                                  "receipt_ref": "opaque-1"}}
+    assert "receipt_ref" not in with_ref
     assert validate_error_body(body) and validate_error_body(with_ref)
 
 
@@ -124,6 +125,7 @@ def test_validate_error_body_rejects_extras_and_wrong_shapes():
     assert not validate_error_body({"error": {"code": "nope", "correlation_id": cid}})
     assert not validate_error_body({"error": {"code": "serving.disabled", "correlation_id": 1}})
     assert not validate_error_body({"receipt_ref": "x"})
+    assert not validate_error_body({**good, "receipt_ref": "x"})  # sibling placement refused
     assert not validate_error_body("body")
 
 
@@ -143,8 +145,8 @@ def test_validate_error_body_rejects_malformed_fields_without_raising(err):
 def test_validate_error_body_rejects_invalid_receipt_ref(ref):
     """An invalid receipt_ref is rejected; a valid one is accepted."""
     err = {"code": "serving.disabled", "correlation_id": str(uuid.uuid4())}
-    assert validate_error_body({"error": err, "receipt_ref": "r-1"}) is True
-    assert validate_error_body({"error": err, "receipt_ref": ref}) is False
+    assert validate_error_body({"error": {**err, "receipt_ref": "r-1"}}) is True
+    assert validate_error_body({"error": {**err, "receipt_ref": ref}}) is False
 
 
 def test_serving_error_returns_status_and_body():
@@ -288,3 +290,15 @@ def test_local_only_authorizer_blocks_transport_before_dial():
             transport_policy=TransportPolicy(), actor_id="a", workflow_id="w",
             purpose=EndpointPurpose.MODEL_EGRESS, run_id="r", resolver=_resolver)
     assert exc.value.code == "purpose_denied"
+
+
+def test_deny_status_table_matches_contract():
+    """Every deny code has the contract HTTP status and none is outside the closed set."""
+    from telos.serving import DENY_STATUS, PUBLIC_ERROR_CODES
+    assert DENY_STATUS == {
+        "deny.malformed_grant": 400, "deny.unauthorized_caller": 401,
+        "deny.unknown_key": 403, "deny.revoked_grant": 403,
+        "deny.missing_capability_record": 403,
+        "deny.revocation_stale": 503, "deny.verifier_unavailable": 503,
+    }
+    assert set(DENY_STATUS) <= PUBLIC_ERROR_CODES

@@ -42,6 +42,20 @@ PUBLIC_ERROR_CODES: frozenset[str] = frozenset(
 )
 
 
+_ERROR_FIELDS: frozenset[str] = frozenset({"code", "correlation_id", "receipt_ref"})
+
+# HTTP status of each public deny.* code (contract section 3); one table for every surface.
+DENY_STATUS: dict[str, int] = {
+    "deny.malformed_grant": 400,
+    "deny.unauthorized_caller": 401,
+    "deny.unknown_key": 403,
+    "deny.revoked_grant": 403,
+    "deny.missing_capability_record": 403,
+    "deny.revocation_stale": 503,
+    "deny.verifier_unavailable": 503,
+}
+
+
 def new_correlation_id() -> str:
     """Return a fresh random UUID string for an error body."""
     return str(uuid.uuid4())
@@ -67,20 +81,21 @@ def build_error_body(code: str, correlation_id: str, *, receipt_ref: str | None 
     """Build the contract error body ``{"error": {"code", "correlation_id"}}``.
 
     ``receipt_ref`` is the only optional field, and only when a durable record
-    exists; it is placed beside ``error`` as the contract specifies. There is no
-    way to pass any other field. Unknown codes and malformed ids raise ValueError.
+    exists; it is placed inside the ``error`` object as the contract specifies
+    and is never a sibling of ``error``. There is no way to pass any other field.
+    Unknown codes and malformed ids raise ValueError.
     """
     code = str(code)
     if code not in PUBLIC_ERROR_CODES:
         raise ValueError("unknown public error code")
     if not _valid_correlation_id(correlation_id):
         raise ValueError("correlation_id must be a UUID string")
-    body: dict[str, Any] = {"error": {"code": code, "correlation_id": correlation_id}}
+    error: dict[str, str] = {"code": code, "correlation_id": correlation_id}
     if receipt_ref is not None:
         if not _valid_receipt_ref(receipt_ref):
             raise ValueError("receipt_ref must be a non-empty printable opaque string")
-        body["receipt_ref"] = receipt_ref
-    return body
+        error["receipt_ref"] = receipt_ref
+    return {"error": error}
 
 
 def serving_error(code: ServingCode, correlation_id: str | None = None) -> tuple[int, dict[str, Any]]:
@@ -91,12 +106,12 @@ def serving_error(code: ServingCode, correlation_id: str | None = None) -> tuple
 
 def validate_error_body(body: object) -> bool:
     """True only for a body that build_error_body could have produced; never raises."""
-    if not isinstance(body, dict) or "error" not in body or not set(body) <= {"error", "receipt_ref"}:
-        return False
-    if "receipt_ref" in body and not _valid_receipt_ref(body["receipt_ref"]):
+    if not isinstance(body, dict) or set(body) != {"error"}:
         return False
     err = body["error"]
-    if not isinstance(err, dict) or set(err) != {"code", "correlation_id"}:
+    if not isinstance(err, dict) or not {"code", "correlation_id"} <= set(err) <= _ERROR_FIELDS:
+        return False
+    if "receipt_ref" in err and not _valid_receipt_ref(err["receipt_ref"]):
         return False
     code = err["code"]
     return (

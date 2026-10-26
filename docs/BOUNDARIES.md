@@ -44,9 +44,10 @@ enables anything, and none of it is an activation record.
   host field, so no provider host can be added through it.
 - **Stable codes** (`telos.serving.ServingCode`): `serving.not_ready` and
   `serving.disabled` (HTTP 503) and `serving.route_not_exposed` (404).
-  `build_error_body` emits exactly `{"error": {"code", "correlation_id"}}` (plus
-  an opaque `receipt_ref` only when a durable record exists) and accepts no other
-  field. A not-ready state is a 503, never a 200 with a warning.
+  `build_error_body` emits exactly `{"error": {"code", "correlation_id"}}`; an
+  opaque `receipt_ref` is added inside the `error` object only when a durable
+  record exists (never beside it), and no other field is accepted. `DENY_STATUS`
+  fixes the HTTP status of each `deny.*` code (400, 401, 403 or 503). A not-ready state is a 503, never a 200 with a warning.
 - **Proxy isolation**: `TransportPolicy.trust_env` is `False` and `False` is the
   only accepted value. `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY`
   are never read; each hop dials its vetted, pinned IP directly. Redirect rules
