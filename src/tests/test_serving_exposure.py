@@ -20,6 +20,7 @@ LOOPBACK = str(ipaddress.IPv4Address(0x7F000001))
 
 # ---- 1. exposure policy -------------------------------------------------
 def test_default_policy_exposes_nothing():
+    """The default policy exposes no route."""
     p = ExposurePolicy()
     for m, path in [("GET", "/healthz"), ("POST", "/verify"), ("GET", "/")]:
         d = p.decide(m, path)
@@ -27,6 +28,7 @@ def test_default_policy_exposes_nothing():
 
 
 def test_verify_readiness_only_allows_exactly_three_routes():
+    """The readiness preset allows exactly the two probes and one verify route."""
     p = ExposurePolicy.verify_readiness_only("/v1/verify")
     assert p.routes == {("GET", "/healthz"), ("GET", "/readyz"), ("POST", "/v1/verify")}
     assert all(p.decide(m, r).exposed for m, r in p.routes)
@@ -37,8 +39,10 @@ def test_verify_readiness_only_allows_exactly_three_routes():
     ("GET", "/healthz?x=1"), ("GET", "/v1/verify"), ("POST", "/v1/effects"),
     ("POST", "/v1/verify/../effects"), ("GET", "//healthz"), ("GET", "/healthz%2f"),
     ("GET", ""), (None, "/healthz"), ("GET", None), (b"GET", b"/healthz"), ("GET", 5),
+    ([], "/healthz"), ({}, "/healthz"), ({"GET"}, "/healthz"), (["GET"], ["/healthz"]),
 ])
 def test_routes_outside_policy_are_not_exposed(method, path):
+    """Anything outside the policy, including malformed input, is refused with 404."""
     d = ExposurePolicy.verify_readiness_only("/v1/verify").decide(method, path)
     assert not d.exposed and d.code == ServingCode.ROUTE_NOT_EXPOSED.value and d.status == 404
 
@@ -48,6 +52,7 @@ def test_routes_outside_policy_are_not_exposed(method, path):
     {("GET", "/a?b")}, {("GET", "/a b")}, {("GET", "/a/../b")}, {("GET",)}, {"/a"},
 ])
 def test_malformed_route_entries_are_refused(bad):
+    """Malformed route entries make the policy constructor raise."""
     with pytest.raises(ValueError):
         ExposurePolicy(frozenset(bad))
 
@@ -56,11 +61,13 @@ def test_malformed_route_entries_are_refused(bad):
     ("/healthz", "GET"), ("/readyz", "GET"), ("verify", "POST"), ("/v", "BOGUS"), ("/x?y", "POST"),
 ])
 def test_verify_route_must_be_valid_and_distinct(path, method):
+    """The verify route must be valid and differ from readiness routes."""
     with pytest.raises(ValueError):
         ExposurePolicy.verify_readiness_only(path, method)
 
 
 def test_policy_is_immutable_and_has_no_host_field():
+    """The policy is frozen and carries no host, URL or provider field."""
     p = ExposurePolicy.verify_readiness_only("/v1/verify")
     with pytest.raises(dataclasses.FrozenInstanceError):
         p.routes = frozenset()
@@ -72,6 +79,7 @@ def test_policy_is_immutable_and_has_no_host_field():
 
 # ---- 2. vocabulary and error body --------------------------------------
 def test_serving_codes_and_statuses_are_stable():
+    """Serving codes and their HTTP statuses are fixed."""
     assert ServingCode.NOT_READY == "serving.not_ready" and ServingCode.NOT_READY.http_status == 503
     assert ServingCode.DISABLED == "serving.disabled" and ServingCode.DISABLED.http_status == 503
     assert ServingCode.ROUTE_NOT_EXPOSED == "serving.route_not_exposed"
@@ -79,6 +87,7 @@ def test_serving_codes_and_statuses_are_stable():
 
 
 def test_error_body_shape_is_exact():
+    """The error body has exactly the contract shape."""
     cid = str(uuid.uuid4())
     body = build_error_body("serving.not_ready", cid)
     assert body == {"error": {"code": "serving.not_ready", "correlation_id": cid}}
@@ -89,6 +98,7 @@ def test_error_body_shape_is_exact():
 
 
 def test_error_body_refuses_extra_fields_and_bad_input():
+    """The builder refuses unknown codes, bad ids and bad receipt refs."""
     cid = str(uuid.uuid4())
     with pytest.raises(TypeError):
         build_error_body("serving.not_ready", cid, detail="x")
@@ -104,6 +114,7 @@ def test_error_body_refuses_extra_fields_and_bad_input():
 
 
 def test_validate_error_body_rejects_extras_and_wrong_shapes():
+    """The validator rejects extra fields and wrong shapes."""
     cid = str(uuid.uuid4())
     good = {"error": {"code": "serving.disabled", "correlation_id": cid}}
     assert validate_error_body(good)
@@ -116,7 +127,28 @@ def test_validate_error_body_rejects_extras_and_wrong_shapes():
     assert not validate_error_body("body")
 
 
+@pytest.mark.parametrize("err", [
+    {"code": ["serving.disabled"], "correlation_id": str(uuid.uuid4())},
+    {"code": {"a": 1}, "correlation_id": str(uuid.uuid4())},
+    {"code": "serving.disabled", "correlation_id": "not-a-uuid"},
+    {"code": "serving.disabled", "correlation_id": ""},
+    {"code": "serving.disabled", "correlation_id": [str(uuid.uuid4())]},
+])
+def test_validate_error_body_rejects_malformed_fields_without_raising(err):
+    """Malformed code or correlation_id types and values return False, never raise."""
+    assert validate_error_body({"error": err}) is False
+
+
+@pytest.mark.parametrize("ref", [["x"], "", 5, "bad\nref", {"a": 1}])
+def test_validate_error_body_rejects_invalid_receipt_ref(ref):
+    """An invalid receipt_ref is rejected; a valid one is accepted."""
+    err = {"code": "serving.disabled", "correlation_id": str(uuid.uuid4())}
+    assert validate_error_body({"error": err, "receipt_ref": "r-1"}) is True
+    assert validate_error_body({"error": err, "receipt_ref": ref}) is False
+
+
 def test_serving_error_returns_status_and_body():
+    """serving_error returns the fixed status and a valid body."""
     status, body = serving_error(ServingCode.NOT_READY)
     assert status == 503 and validate_error_body(body)
     status, body = serving_error("serving.route_not_exposed", str(uuid.uuid4()))
@@ -127,6 +159,7 @@ def test_serving_error_returns_status_and_body():
 
 # ---- 3. proxy isolation and TLS-only credential redirects ---------------
 def test_trust_env_true_is_refused_and_default_is_false():
+    """trust_env=True is refused and the default is False."""
     assert TransportPolicy().trust_env is False
     for bad in (True, 1, "yes"):
         with pytest.raises(ValueError):
@@ -134,7 +167,9 @@ def test_trust_env_true_is_refused_and_default_is_false():
 
 
 class _Handler(BaseHTTPRequestHandler):
+    """Loopback request handler that records the paths it serves."""
     def do_GET(self):
+        """Record the path and reply 200 with body ok."""
         self.server.hits.append(self.path)
         self.send_response(200)
         self.send_header("Content-Length", "2")
@@ -142,10 +177,12 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(b"ok")
 
     def log_message(self, *a):
+        """Suppress request logging."""
         pass
 
 
 def _serve():
+    """Start a loopback HTTP server on an ephemeral port and return it."""
     srv = HTTPServer((LOOPBACK, 0), _Handler)
     srv.hits = []
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -153,12 +190,14 @@ def _serve():
 
 
 def _resolver(host, port):
+    """Resolver stub that maps every host to loopback."""
     return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (LOOPBACK, port))]
 
 
 @pytest.mark.parametrize("var", ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
                                  "http_proxy", "https_proxy", "all_proxy", "no_proxy"])
 def test_proxy_environment_does_not_affect_request(monkeypatch, var):
+    """Proxy environment variables never route or alter a request."""
     target, fake_proxy = _serve(), _serve()
     try:
         proxy_url = f"http://{LOOPBACK}:{fake_proxy.server_port}"
@@ -181,24 +220,40 @@ def test_proxy_environment_does_not_affect_request(monkeypatch, var):
 
 
 def test_transport_never_imports_proxy_env_readers():
+    """The transport source never reads proxy settings from the environment."""
     import inspect
     src = inspect.getsource(transport)
     assert not any(w in src for w in ("getproxies", "os.environ", "getenv", "urlopen"))
 
 
 def test_credential_redirect_to_cleartext_public_http_is_refused(monkeypatch):
+    """A credentialed redirect to cleartext public HTTP is refused before dialling."""
     class Resp:
+        """Stub redirect response."""
         status = 302
-        def getheaders(self): return [("Location", "http://two.example/next")]
-        def read(self, amt=None): return b""
+        def getheaders(self):
+            """Return a Location redirect header."""
+            return [("Location", "http://two.example/next")]
+        def read(self, amt=None):
+            """Return an empty body."""
+            return b""
     seen = []
     class Conn:
-        def __init__(self, host, port, pinned_ip, timeout): pass
-        def request(self, method, path, body=None, headers=None): seen.append(dict(headers or {}))
-        def getresponse(self): return Resp()
-        def close(self): pass
+        """Stub connection that records headers and never dials."""
+        def __init__(self, host, port, pinned_ip, timeout):
+            """Accept and ignore the connection arguments."""
+        def request(self, method, path, body=None, headers=None):
+            """Record the request headers."""
+            seen.append(dict(headers or {}))
+        def getresponse(self):
+            """Return the stub response."""
+            return Resp()
+        def close(self):
+            """Do nothing."""
+            pass
     monkeypatch.setattr(transport, "_PinnedHTTPSConnection", Conn)
     def public(host, port):
+        """Resolver stub that maps every host to a public address."""
         return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (str(ipaddress.IPv4Address(0x5DB8D822)), port))]
     auth = EndpointAuthorizer.from_exact_rules({EndpointPurpose.MODEL_EGRESS: {
         ("https", "one.example", 443), ("http", "two.example", 80)}})
@@ -215,6 +270,7 @@ def test_credential_redirect_to_cleartext_public_http_is_refused(monkeypatch):
 # ---- 4. local-only egress preset ---------------------------------------
 @pytest.mark.parametrize("purpose", list(EndpointPurpose))
 def test_local_only_authorizer_allows_no_host(purpose):
+    """The local-only authorizer denies every purpose."""
     auth = local_only_authorizer()
     for scheme, host, port in [("https", "api.example", 443), ("http", "svc.test", 80)]:
         ident = resolve_endpoint(endpoint_from_url(f"{scheme}://{host}:{port}"),
@@ -225,6 +281,7 @@ def test_local_only_authorizer_allows_no_host(purpose):
 
 
 def test_local_only_authorizer_blocks_transport_before_dial():
+    """The local-only authorizer blocks transport before any dial."""
     with pytest.raises(EndpointPolicyError) as exc:
         transport.request(
             "GET", "http://svc.test:9/x", authorizer=local_only_authorizer(),

@@ -28,6 +28,7 @@ def _valid_route(route: object) -> bool:
     """True for a (METHOD, /path) pair using a known uppercase method."""
     return (
         isinstance(route, tuple) and len(route) == 2
+        and isinstance(route[0], str)
         and route[0] in _METHODS and _valid_path(route[1])
     )
 

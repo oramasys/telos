@@ -47,6 +47,22 @@ def new_correlation_id() -> str:
     return str(uuid.uuid4())
 
 
+def _valid_correlation_id(value: object) -> bool:
+    """True only for a string that parses as a UUID."""
+    if not isinstance(value, str):
+        return False
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _valid_receipt_ref(value: object) -> bool:
+    """True only for a non-empty printable opaque string."""
+    return isinstance(value, str) and bool(value) and value.isprintable()
+
+
 def build_error_body(code: str, correlation_id: str, *, receipt_ref: str | None = None) -> dict[str, Any]:
     """Build the contract error body ``{"error": {"code", "correlation_id"}}``.
 
@@ -57,13 +73,11 @@ def build_error_body(code: str, correlation_id: str, *, receipt_ref: str | None 
     code = str(code)
     if code not in PUBLIC_ERROR_CODES:
         raise ValueError("unknown public error code")
-    try:
-        uuid.UUID(correlation_id)
-    except (ValueError, AttributeError, TypeError) as exc:
-        raise ValueError("correlation_id must be a UUID string") from exc
+    if not _valid_correlation_id(correlation_id):
+        raise ValueError("correlation_id must be a UUID string")
     body: dict[str, Any] = {"error": {"code": code, "correlation_id": correlation_id}}
     if receipt_ref is not None:
-        if not isinstance(receipt_ref, str) or not receipt_ref or not receipt_ref.isprintable():
+        if not _valid_receipt_ref(receipt_ref):
             raise ValueError("receipt_ref must be a non-empty printable opaque string")
         body["receipt_ref"] = receipt_ref
     return body
@@ -76,15 +90,19 @@ def serving_error(code: ServingCode, correlation_id: str | None = None) -> tuple
 
 
 def validate_error_body(body: object) -> bool:
-    """True only for a body with exactly the contract shape and no extra field."""
+    """True only for a body that build_error_body could have produced; never raises."""
     if not isinstance(body, dict) or "error" not in body or not set(body) <= {"error", "receipt_ref"}:
         return False
+    if "receipt_ref" in body and not _valid_receipt_ref(body["receipt_ref"]):
+        return False
     err = body["error"]
+    if not isinstance(err, dict) or set(err) != {"code", "correlation_id"}:
+        return False
+    code = err["code"]
     return (
-        isinstance(err, dict)
-        and set(err) == {"code", "correlation_id"}
-        and err["code"] in PUBLIC_ERROR_CODES
-        and isinstance(err["correlation_id"], str)
+        isinstance(code, str)
+        and code in PUBLIC_ERROR_CODES
+        and _valid_correlation_id(err["correlation_id"])
     )
 
 
