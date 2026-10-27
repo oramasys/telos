@@ -95,7 +95,7 @@ def test_error_body_shape_is_exact():
     assert with_ref == {"error": {"code": "deny.revoked_grant", "correlation_id": cid,
                                   "receipt_ref": "opaque-1"}}
     assert "receipt_ref" not in with_ref
-    assert validate_error_body(body) and validate_error_body(with_ref)
+    assert validate_error_body(body, status=503) and validate_error_body(with_ref, status=403)
 
 
 def test_error_body_refuses_extra_fields_and_bad_input():
@@ -118,15 +118,15 @@ def test_validate_error_body_rejects_extras_and_wrong_shapes():
     """The validator rejects extra fields and wrong shapes."""
     cid = str(uuid.uuid4())
     good = {"error": {"code": "serving.not_ready", "correlation_id": cid}}
-    assert validate_error_body(good)
-    assert not validate_error_body({**good, "message": "x"})
-    assert not validate_error_body({"error": {**good["error"], "path": "/p"}})
-    assert not validate_error_body({"error": {"code": "serving.not_ready"}})
-    assert not validate_error_body({"error": {"code": "nope", "correlation_id": cid}})
-    assert not validate_error_body({"error": {"code": "serving.not_ready", "correlation_id": 1}})
-    assert not validate_error_body({"receipt_ref": "x"})
-    assert not validate_error_body({**good, "receipt_ref": "x"})  # sibling placement refused
-    assert not validate_error_body("body")
+    assert validate_error_body(good, status=503)
+    assert not validate_error_body({**good, "message": "x"}, status=503)
+    assert not validate_error_body({"error": {**good["error"], "path": "/p"}}, status=503)
+    assert not validate_error_body({"error": {"code": "serving.not_ready"}}, status=503)
+    assert not validate_error_body({"error": {"code": "nope", "correlation_id": cid}}, status=503)
+    assert not validate_error_body({"error": {"code": "serving.not_ready", "correlation_id": 1}}, status=503)
+    assert not validate_error_body({"receipt_ref": "x"}, status=503)
+    assert not validate_error_body({**good, "receipt_ref": "x"}, status=503)  # sibling placement refused
+    assert not validate_error_body("body", status=503)
 
 
 @pytest.mark.parametrize("err", [
@@ -138,21 +138,21 @@ def test_validate_error_body_rejects_extras_and_wrong_shapes():
 ])
 def test_validate_error_body_rejects_malformed_fields_without_raising(err):
     """Malformed code or correlation_id types and values return False, never raise."""
-    assert validate_error_body({"error": err}) is False
+    assert validate_error_body({"error": err}, status=503) is False
 
 
 @pytest.mark.parametrize("ref", [["x"], "", 5, "bad\nref", {"a": 1}])
 def test_validate_error_body_rejects_invalid_receipt_ref(ref):
     """An invalid receipt_ref is rejected; a valid one is accepted."""
     err = {"code": "serving.not_ready", "correlation_id": str(uuid.uuid4())}
-    assert validate_error_body({"error": {**err, "receipt_ref": "r-1"}}) is True
-    assert validate_error_body({"error": {**err, "receipt_ref": ref}}) is False
+    assert validate_error_body({"error": {**err, "receipt_ref": "r-1"}}, status=503) is True
+    assert validate_error_body({"error": {**err, "receipt_ref": ref}}, status=503) is False
 
 
 def test_serving_error_returns_status_and_body():
     """serving_error returns the fixed status and a valid body."""
     status, body = serving_error(ServingCode.NOT_READY)
-    assert status == 503 and validate_error_body(body)
+    assert status == 503 and validate_error_body(body, status=status)
     status, body = serving_error("serving.route_not_exposed", str(uuid.uuid4()))
     assert status == 404 and body["error"]["code"] == "serving.route_not_exposed"
     with pytest.raises(ValueError):
@@ -307,7 +307,7 @@ def test_deny_status_table_matches_contract():
 def test_serving_disabled_is_not_a_public_code():
     """serving.disabled is removed: the validator and builder both refuse it."""
     cid = str(uuid.uuid4())
-    assert not validate_error_body({"error": {"code": "serving.disabled", "correlation_id": cid}})
+    assert not validate_error_body({"error": {"code": "serving.disabled", "correlation_id": cid}}, status=503)
     with pytest.raises(ValueError):
         build_error_body("serving.disabled", cid)
 
@@ -318,6 +318,19 @@ def test_grant_conflict_is_public_with_status_409_only():
     cid = str(uuid.uuid4())
     body = build_error_body("deny.grant_conflict", cid)
     assert DENY_STATUS["deny.grant_conflict"] == 409
-    assert validate_error_body(body) and validate_error_body(body, 409)
+    assert validate_error_body(body, status=409)
     for status in (200, 400, 401, 403, 404, 500, 503):
-        assert validate_error_body(body, status) is False
+        assert validate_error_body(body, status=status) is False
+
+
+def test_validate_error_body_requires_status_and_checks_it():
+    """status is a required keyword; a deny code with the wrong status is rejected."""
+    cid = str(uuid.uuid4())
+    body = build_error_body("deny.revoked_grant", cid)
+    with pytest.raises(TypeError):
+        validate_error_body(body)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        validate_error_body(body, 403)  # type: ignore[misc]
+    assert validate_error_body(body, status=403)
+    assert validate_error_body(body, status=401) is False
+    assert validate_error_body(body, status=True) is False  # bool is not an HTTP status

@@ -104,11 +104,12 @@ def serving_error(code: ServingCode, correlation_id: str | None = None) -> tuple
     return code.http_status, build_error_body(code.value, correlation_id or new_correlation_id())
 
 
-def validate_error_body(body: object, status: int | None = None) -> bool:
-    """True only for a body that build_error_body could have produced; never raises.
+def validate_error_body(body: object, *, status: int) -> bool:
+    """True only for a body build_error_body could have produced, sent with its status.
 
-    When ``status`` is given, a code with a fixed HTTP status (``DENY_STATUS`` or a
-    ``ServingCode``) is accepted only with exactly that status.
+    ``status`` is required: a code with a fixed HTTP status (``DENY_STATUS`` or a
+    ``ServingCode``) conforms only with exactly that status, so there is no unchecked
+    shape-only call. Never raises.
     """
     if not isinstance(body, dict) or set(body) != {"error"}:
         return False
@@ -121,13 +122,10 @@ def validate_error_body(body: object, status: int | None = None) -> bool:
     if not (isinstance(code, str) and code in PUBLIC_ERROR_CODES
             and _valid_correlation_id(err["correlation_id"])):
         return False
-    if status is not None:
-        expected = DENY_STATUS.get(code)
-        if expected is None and code in {c.value for c in ServingCode}:
-            expected = ServingCode(code).http_status
-        if expected is not None and status != expected:
-            return False
-    return True
+    expected = DENY_STATUS.get(code)
+    if expected is None and code in {c.value for c in ServingCode}:
+        expected = ServingCode(code).http_status
+    return expected is None or (type(status) is int and status == expected)
 
 
 def local_only_authorizer() -> EndpointAuthorizer:
