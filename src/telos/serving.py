@@ -122,7 +122,7 @@ def validate_error_body(body: object, *, status: int) -> bool:
     if not (isinstance(code, str) and code in PUBLIC_ERROR_CODES
             and _valid_correlation_id(err["correlation_id"])):
         return False
-    if not isinstance(status, int) or isinstance(status, bool):
+    if not isinstance(status, int) or isinstance(status, bool) or not (100 <= status <= 599):
         return False
     expected = DENY_STATUS.get(code)
     if expected is None and code in {c.value for c in ServingCode}:

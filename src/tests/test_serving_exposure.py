@@ -357,3 +357,14 @@ def test_validate_error_body_code_without_fixed_status_requires_int_status():
     assert validate_error_body(body, status=False) is False
     assert validate_error_body(body, status=None) is False  # type: ignore[arg-type]
     assert validate_error_body(body, status="500") is False  # type: ignore[arg-type]
+
+
+def test_validate_error_body_status_range_boundaries():
+    """HTTP statuses must be in range 100..599 inclusive."""
+    body = build_error_body("startup.serving_without_verifier", str(uuid.uuid4()))
+    assert validate_error_body(body, status=100)
+    assert validate_error_body(body, status=599)
+    assert validate_error_body(body, status=0) is False
+    assert validate_error_body(body, status=99) is False
+    assert validate_error_body(body, status=600) is False
+    assert validate_error_body(body, status=-1) is False
