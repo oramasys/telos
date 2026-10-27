@@ -42,8 +42,8 @@ enables anything, and none of it is an activation record.
   `GET /healthz`, `GET /readyz` and the one named verify route. Anything else,
   including malformed input, yields `serving.route_not_exposed` (404). It has no
   host field, so no provider host can be added through it.
-- **Stable codes** (`telos.serving.ServingCode`): `serving.not_ready` and
-  `serving.disabled` (HTTP 503) and `serving.route_not_exposed` (404).
+- **Stable codes** (`telos.serving.ServingCode`): `serving.not_ready`
+  (HTTP 503) and `serving.route_not_exposed` (404).
   `build_error_body` emits exactly `{"error": {"code", "correlation_id"}}`; an
   opaque `receipt_ref` is added inside the `error` object only when a durable
   record exists (never beside it), and no other field is accepted. `DENY_STATUS`

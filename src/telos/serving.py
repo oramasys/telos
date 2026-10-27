@@ -1,7 +1,7 @@
 """Stable serving vocabulary, public error bodies and the local-only egress preset.
 
 Telos owns no readiness or lifecycle state (see docs/BOUNDARIES.md). This module
-only fixes the *words* a serving consumer uses when it is not ready, disabled or
+only fixes the *words* a serving consumer uses when it is not ready or
 asked for a route that is not exposed, so those words and their HTTP statuses
 cannot drift between consumers. Nothing here enables anything.
 """
@@ -18,12 +18,11 @@ class ServingCode(StrEnum):
     """Stable public serving codes (contract section 3) with fixed HTTP statuses."""
 
     NOT_READY = "serving.not_ready"
-    DISABLED = "serving.disabled"
     ROUTE_NOT_EXPOSED = "serving.route_not_exposed"
 
     @property
     def http_status(self) -> int:
-        """HTTP status for this code: 503 for not-ready/disabled, 404 for not exposed."""
+        """HTTP status for this code: 503 for not-ready, 404 for not exposed."""
         return 404 if self is ServingCode.ROUTE_NOT_EXPOSED else 503
 
 
@@ -33,7 +32,7 @@ PUBLIC_ERROR_CODES: frozenset[str] = frozenset(
     | {
         "deny.revocation_stale", "deny.unknown_key", "deny.malformed_grant",
         "deny.revoked_grant", "deny.missing_capability_record",
-        "deny.unauthorized_caller", "deny.verifier_unavailable",
+        "deny.unauthorized_caller", "deny.verifier_unavailable", "deny.grant_conflict",
         "startup.serving_without_verifier", "startup.effects_without_permit_verifier",
         "startup.transport_without_policy", "startup.autonomy_without_activation",
         "startup.monitoring_as_permission", "startup.serving_implies_effects",
@@ -48,6 +47,7 @@ _ERROR_FIELDS: frozenset[str] = frozenset({"code", "correlation_id", "receipt_re
 DENY_STATUS: dict[str, int] = {
     "deny.malformed_grant": 400,
     "deny.unauthorized_caller": 401,
+    "deny.grant_conflict": 409,
     "deny.unknown_key": 403,
     "deny.revoked_grant": 403,
     "deny.missing_capability_record": 403,
@@ -104,8 +104,12 @@ def serving_error(code: ServingCode, correlation_id: str | None = None) -> tuple
     return code.http_status, build_error_body(code.value, correlation_id or new_correlation_id())
 
 
-def validate_error_body(body: object) -> bool:
-    """True only for a body that build_error_body could have produced; never raises."""
+def validate_error_body(body: object, status: int | None = None) -> bool:
+    """True only for a body that build_error_body could have produced; never raises.
+
+    When ``status`` is given, a code with a fixed HTTP status (``DENY_STATUS`` or a
+    ``ServingCode``) is accepted only with exactly that status.
+    """
     if not isinstance(body, dict) or set(body) != {"error"}:
         return False
     err = body["error"]
@@ -114,11 +118,16 @@ def validate_error_body(body: object) -> bool:
     if "receipt_ref" in err and not _valid_receipt_ref(err["receipt_ref"]):
         return False
     code = err["code"]
-    return (
-        isinstance(code, str)
-        and code in PUBLIC_ERROR_CODES
-        and _valid_correlation_id(err["correlation_id"])
-    )
+    if not (isinstance(code, str) and code in PUBLIC_ERROR_CODES
+            and _valid_correlation_id(err["correlation_id"])):
+        return False
+    if status is not None:
+        expected = DENY_STATUS.get(code)
+        if expected is None and code in {c.value for c in ServingCode}:
+            expected = ServingCode(code).http_status
+        if expected is not None and status != expected:
+            return False
+    return True
 
 
 def local_only_authorizer() -> EndpointAuthorizer:
