@@ -42,12 +42,15 @@ enables anything, and none of it is an activation record.
   `GET /healthz`, `GET /readyz` and the one named verify route. Anything else,
   including malformed input, yields `serving.route_not_exposed` (404). It has no
   host field, so no provider host can be added through it.
-- **Stable codes** (`telos.serving.ServingCode`): `serving.not_ready` and
-  `serving.disabled` (HTTP 503) and `serving.route_not_exposed` (404).
+- **Stable codes** (`telos.serving.ServingCode`): `serving.not_ready`
+  (HTTP 503) and `serving.route_not_exposed` (404).
   `build_error_body` emits exactly `{"error": {"code", "correlation_id"}}`; an
   opaque `receipt_ref` is added inside the `error` object only when a durable
   record exists (never beside it), and no other field is accepted. `DENY_STATUS`
-  fixes the HTTP status of each `deny.*` code (400, 401, 403 or 503). A not-ready state is a 503, never a 200 with a warning.
+  fixes the HTTP status of each `deny.*` code (400, 401, 403, 409 or 503;
+  409 is only `deny.grant_conflict`). `validate_error_body` takes the status as a
+  required keyword and accepts a code only with its fixed status. A not-ready
+  state is a 503, never a 200 with a warning.
 - **Proxy isolation**: `TransportPolicy.trust_env` is `False` and `False` is the
   only accepted value. `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY`
   are never read; each hop dials its vetted, pinned IP directly. Redirect rules
