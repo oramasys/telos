@@ -4,13 +4,16 @@ from .authorizer import EndpointAuthorizer
 from .contracts import AuthorizedEndpoint, DecisionRecord, EndpointIdentity, EndpointPurpose, EndpointRef, EndpointUseDecision, EndpointUseRequest, TelosPort
 from .dialer import ConnectedPeer, SecureDialConnector, SecureDialRequest, SecureDialResult, SecureDialer
 from .errors import EndpointPolicyError, TelosError
+from .exposure import ExposureDecision, ExposurePolicy
 from .identity import endpoint_from_url
 from .policy import EndpointPolicy, PurposeRule
 from .resolver import resolve_endpoint
+from .serving import PUBLIC_ERROR_CODES, ServingCode, build_error_body, local_only_authorizer, new_correlation_id, serving_error, validate_error_body
 from .transport import TelosResponse, TransportPolicy, authorize_url, request
 
 __all__ = [
-    "AuthorizedEndpoint", "ConnectedPeer", "DecisionRecord", "EndpointAuthorizer",
+    "AuthorizedEndpoint", "ExposureDecision", "ExposurePolicy", "PUBLIC_ERROR_CODES", "ServingCode",
+    "build_error_body", "local_only_authorizer", "new_correlation_id", "serving_error", "validate_error_body", "ConnectedPeer", "DecisionRecord", "EndpointAuthorizer",
     "EndpointIdentity", "EndpointPolicy", "EndpointPolicyError", "EndpointPurpose",
     "EndpointRef", "EndpointUseDecision", "EndpointUseRequest", "PurposeRule",
     "SecureDialConnector", "SecureDialRequest", "SecureDialResult", "SecureDialer",

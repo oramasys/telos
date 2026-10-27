@@ -25,16 +25,28 @@ from .resolver import Resolver, resolve_endpoint
 
 @dataclass(frozen=True, slots=True)
 class TransportPolicy:
+    """Transport policy. ``trust_env`` must stay False: proxy environment
+    variables (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY) are never read, so
+    a hop always dials its vetted, pinned IP directly. True is refused."""
+
     allow_public: bool = False
     allow_private: bool = False
     allow_loopback: bool = True
     require_https_for_public: bool = True
     max_redirects: int = 3
     max_body_bytes: int = 10_485_760  # 10 MiB -- see docs/BOUNDARIES.md for rationale
+    # Last, so positional construction of the earlier fields is unchanged.
+    trust_env: bool = False
+
+    def __post_init__(self) -> None:
+        """Refuse any trust_env value other than False."""
+        if self.trust_env is not False:
+            raise ValueError("trust_env=False is the only allowed value")
 
 
 @dataclass(frozen=True, slots=True)
 class TelosResponse:
+    """Immutable result of a Telos request: status, headers, body and final URL."""
     status: int
     headers: tuple[tuple[str, str], ...]
     body: bytes
@@ -56,6 +68,7 @@ _CREDENTIAL_HEADER_RE = re.compile(
 
 
 def _raise_if_cancelled(cancel_check: CancelCheck | None) -> None:
+    """Raise EndpointPolicyError when the cancel check reports cancellation."""
     if cancel_check is not None and cancel_check():
         raise EndpointPolicyError("cancelled", "endpoint request was cancelled")
 
@@ -78,11 +91,14 @@ def _verify_peer(sock: object, pinned_ip: str) -> None:
 
 
 class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """HTTP connection that dials only the pre-validated pinned IP."""
     def __init__(self, host: str, port: int, pinned_ip: str, timeout: float) -> None:
+        """Initialize the instance."""
         super().__init__(host, port, timeout=timeout)
         self._pinned_ip = pinned_ip
 
     def connect(self) -> None:
+        """Open the socket to the pinned IP and verify the peer before use."""
         sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
         try:
             _verify_peer(sock, self._pinned_ip)
@@ -95,6 +111,7 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection that dials only the pre-validated pinned IP."""
     def __init__(
         self,
         host: str,
@@ -103,6 +120,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         timeout: float,
         context: ssl.SSLContext | None = None,
     ) -> None:
+        """Initialize the instance."""
         super().__init__(
             host,
             port,
@@ -112,6 +130,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
         self._pinned_ip = pinned_ip
 
     def connect(self) -> None:
+        """Open the socket to the pinned IP and verify the peer before use."""
         raw = socket.create_connection((self._pinned_ip, self.port), self.timeout)
         try:
             _verify_peer(raw, self._pinned_ip)
@@ -132,6 +151,7 @@ def _authorize_identity(
     purpose: EndpointPurpose,
     run_id: str,
 ) -> AuthorizedEndpoint:
+    """Authorize an endpoint identity for a purpose or raise EndpointPolicyError."""
     decision = authorizer.authorize(
         EndpointUseRequest(actor_id, workflow_id, purpose, identity, run_id)
     )
@@ -153,6 +173,7 @@ def authorize_url(
     run_id: str,
     resolver: Resolver,
 ) -> AuthorizedEndpoint:
+    """Parse a URL and authorize it against the endpoint authorizer and transport policy."""
     endpoint = endpoint_from_url(raw_url)
     identity = resolve_endpoint(
         endpoint,
@@ -178,6 +199,7 @@ def authorize_url(
 
 
 def _drop_headers_case_insensitive(headers: dict[str, str], names: set[str]) -> None:
+    """Remove the named headers from the dict, ignoring case."""
     wanted = {name.lower() for name in names}
     for key in list(headers):
         if key.lower() in wanted:
@@ -185,12 +207,14 @@ def _drop_headers_case_insensitive(headers: dict[str, str], names: set[str]) -> 
 
 
 def _authority(endpoint) -> str:
+    """Return the host[:port] authority string, omitting the scheme's default port."""
     default_port = 443 if endpoint.scheme == "https" else 80
     host = f"[{endpoint.host}]" if ":" in endpoint.host else endpoint.host
     return host if endpoint.port == default_port else f"{host}:{endpoint.port}"
 
 
 def _origin(raw_url: str) -> tuple[str, str, int]:
+    """Return the (scheme, host, port) origin of a URL."""
     endpoint = endpoint_from_url(raw_url)
     return endpoint.scheme, endpoint.host, endpoint.port
 
@@ -213,6 +237,7 @@ def request(
     _hop: int = 0,
     _deadline: float | None = None,
 ) -> TelosResponse:
+    """Perform an authorized, IP-pinned HTTP request and return a TelosResponse."""
     _raise_if_cancelled(cancel_check)
     if _hop > transport_policy.max_redirects:
         raise EndpointPolicyError(
