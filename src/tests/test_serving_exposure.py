@@ -344,3 +344,16 @@ def test_validate_error_body_accepts_http_status_enum():
     assert validate_error_body(body, status=HTTPStatus.CONFLICT)
     assert validate_error_body(body, status=HTTPStatus.FORBIDDEN) is False
     assert validate_error_body(body, status=False) is False
+
+
+def test_validate_error_body_code_without_fixed_status_requires_int_status():
+    """Codes without fixed statuses require an int status; bool, None, or str are rejected."""
+    from http import HTTPStatus
+
+    body = build_error_body("startup.serving_without_verifier", str(uuid.uuid4()))
+    assert validate_error_body(body, status=500)
+    assert validate_error_body(body, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+    assert validate_error_body(body, status=True) is False
+    assert validate_error_body(body, status=False) is False
+    assert validate_error_body(body, status=None) is False  # type: ignore[arg-type]
+    assert validate_error_body(body, status="500") is False  # type: ignore[arg-type]

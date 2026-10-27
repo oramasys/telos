@@ -122,12 +122,14 @@ def validate_error_body(body: object, *, status: int) -> bool:
     if not (isinstance(code, str) and code in PUBLIC_ERROR_CODES
             and _valid_correlation_id(err["correlation_id"])):
         return False
+    if not isinstance(status, int) or isinstance(status, bool):
+        return False
     expected = DENY_STATUS.get(code)
     if expected is None and code in {c.value for c in ServingCode}:
         expected = ServingCode(code).http_status
-    return expected is None or (
-        isinstance(status, int) and not isinstance(status, bool) and status == expected
-    )
+    if expected is not None:
+        return status == expected
+    return True
 
 
 def local_only_authorizer() -> EndpointAuthorizer:
