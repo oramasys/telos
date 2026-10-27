@@ -334,3 +334,13 @@ def test_validate_error_body_requires_status_and_checks_it():
     assert validate_error_body(body, status=403)
     assert validate_error_body(body, status=401) is False
     assert validate_error_body(body, status=True) is False  # bool is not an HTTP status
+
+
+def test_validate_error_body_accepts_http_status_enum():
+    """An HTTPStatus member equal to the fixed status conforms; a bool never does."""
+    from http import HTTPStatus
+
+    body = build_error_body("deny.grant_conflict", str(uuid.uuid4()))
+    assert validate_error_body(body, status=HTTPStatus.CONFLICT)
+    assert validate_error_body(body, status=HTTPStatus.FORBIDDEN) is False
+    assert validate_error_body(body, status=False) is False

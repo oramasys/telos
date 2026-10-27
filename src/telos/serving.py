@@ -125,7 +125,9 @@ def validate_error_body(body: object, *, status: int) -> bool:
     expected = DENY_STATUS.get(code)
     if expected is None and code in {c.value for c in ServingCode}:
         expected = ServingCode(code).http_status
-    return expected is None or (type(status) is int and status == expected)
+    return expected is None or (
+        isinstance(status, int) and not isinstance(status, bool) and status == expected
+    )
 
 
 def local_only_authorizer() -> EndpointAuthorizer:
